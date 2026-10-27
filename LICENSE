@@ -1,0 +1,22 @@
+Copyright (c) 2026 Cassieandstuff. All rights reserved.
+
+PROVISIONAL — the project license is not yet finalized.
+
+This is an unreleased work in progress. Until a definitive license is chosen and
+placed here, no rights are granted to use, copy, modify, or distribute this code
+or its assets.
+
+Licensing considerations for whoever finalizes this:
+  - The editor links ESPER (GPL-3.0-or-later, first-party, its own repo) via
+    FetchContent through include/internal/sct-esm, which constrains the
+    editor's distributable license. The SKSE plugins under src/SKSE/ do not
+    link it.
+  - The editor links NIFFER (first-party, its own repo; published under
+    GPL-3.0-or-later and also licensed by its copyright holder under other
+    terms) via FetchContent through include/internal/sct-pipeline and
+    sct-assets. Keeping NIFFER's CLA in force is what keeps the other-terms
+    option open. The SKSE plugins under src/SKSE/ do not link it.
+  - Bundled build tooling and dependencies carry their own licenses (e.g.
+    HKX2E is MIT; CommonLibSSE, rapidyaml, etc. have their own terms).
+
+Replace this file with the chosen license text before any public release.

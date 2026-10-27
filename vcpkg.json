@@ -1,0 +1,7 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "render",
+  "version": "0.1.0",
+  "description": "Backend-neutral scene renderer interface and its Diligent Engine backend",
+  "dependencies": [ "glm" ]
+}
