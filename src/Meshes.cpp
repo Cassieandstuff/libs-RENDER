@@ -43,9 +43,11 @@ MeshHandle DiligentSceneRenderer::UploadMesh(const MeshData& data) {
     // Positions are DEFAULT usage so UpdateMeshPositions can overwrite them.
     m.positions = CreateVertexBuffer(r.device, "render mesh positions", data.positions, USAGE_DEFAULT);
 
-    // Normals and UVs are always bound (the PBR layout reads both); fill when absent.
-    if (data.normals.size() == n) m.normals = CreateVertexBuffer(r.device, "render mesh normals", data.normals);
-    else m.normals = CreateVertexBuffer(r.device, "render mesh normals", std::vector<glm::vec3>(n, glm::vec3(0.f, 0.f, 1.f)));
+    // Normals and UVs are always bound (the PBR layout reads both); fill when absent. Normals are DEFAULT usage so
+    // UpdateMeshNormals can overwrite them.
+    if (data.normals.size() == n) m.normals = CreateVertexBuffer(r.device, "render mesh normals", data.normals, USAGE_DEFAULT);
+    else m.normals = CreateVertexBuffer(r.device, "render mesh normals", std::vector<glm::vec3>(n, glm::vec3(0.f, 0.f, 1.f)),
+                                        USAGE_DEFAULT);
     if (data.uvs.size() == n) m.uvs = CreateVertexBuffer(r.device, "render mesh uvs", data.uvs);
     else m.uvs = CreateVertexBuffer(r.device, "render mesh uvs", std::vector<glm::vec2>(n, glm::vec2(0.f)));
 
@@ -95,6 +97,20 @@ void DiligentSceneRenderer::UpdateMeshPositions(MeshHandle handle, std::span<con
         return;
     }
     r.context->UpdateBuffer(m.positions, 0, positions.size_bytes(), positions.data(),
+                            RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+}
+
+void DiligentSceneRenderer::UpdateMeshNormals(MeshHandle handle, std::span<const glm::vec3> normals) {
+    Impl& r = *m_impl;
+    auto it = r.meshes.find(static_cast<std::uint32_t>(handle));
+    if (it == r.meshes.end()) return;
+    GpuMesh& m = it->second;
+    if (normals.size() != m.vertexCount) {
+        std::fprintf(stderr, "[render] UpdateMeshNormals: %zu normals for a %u-vertex mesh; ignored\n",
+                     normals.size(), m.vertexCount);
+        return;
+    }
+    r.context->UpdateBuffer(m.normals, 0, normals.size_bytes(), normals.data(),
                             RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 }
 

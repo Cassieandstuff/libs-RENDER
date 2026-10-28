@@ -238,6 +238,7 @@ public:
     void          FreeMesh(MeshHandle handle) override;
     TextureHandle UploadBlendMap(const float* data33x33) override;
     void          UpdateMeshPositions(MeshHandle handle, std::span<const glm::vec3> positions) override;
+    void          UpdateMeshNormals(MeshHandle handle, std::span<const glm::vec3> normals) override;
     TextureHandle LoadTexture(const std::string& path, TexColorSpace space) override;
     TextureHandle LoadTextureFromMemory(const std::vector<uint8_t>& bytes, TexColorSpace space) override;
     void          FreeTexture(TextureHandle handle) override;

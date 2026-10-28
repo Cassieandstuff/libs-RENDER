@@ -280,6 +280,11 @@ struct ISceneRenderer {
     // CPU-side morph blending (face ARKit blend shapes).
     virtual void          UpdateMeshPositions(MeshHandle handle,
                                               std::span<const glm::vec3> positions) = 0;
+    // Overwrite the normal buffer the same way (same length as the upload).  Used
+    // beside UpdateMeshPositions when the CPU deforms a mesh (CPU-skinned faces), so
+    // shading follows the deformed surface.
+    virtual void          UpdateMeshNormals  (MeshHandle handle,
+                                              std::span<const glm::vec3> normals)   = 0;
     // `space` is required, not defaulted: getting it wrong is silent (a washed
     // out albedo, or a corrupted normal map), so every call site must state
     // which it means.  See TexColorSpace above.

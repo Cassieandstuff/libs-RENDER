@@ -229,6 +229,9 @@ void TestResources(RenderDevice& dev) {
     const std::vector<glm::vec3> moved(4, glm::vec3(0.f));
     r.UpdateMeshPositions(m, moved);
     r.UpdateMeshPositions(m, std::span<const glm::vec3>(moved.data(), 2));   // wrong length: ignored
+    const std::vector<glm::vec3> turned(4, glm::vec3(0.f, 1.f, 0.f));
+    r.UpdateMeshNormals(m, turned);
+    r.UpdateMeshNormals(m, std::span<const glm::vec3>(turned.data(), 2));    // wrong length: ignored
 
     r.BeginFrame(8, 8);
     r.EndFrame();
