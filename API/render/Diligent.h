@@ -183,6 +183,13 @@ struct GlyphAtlas {
     std::uint32_t             fallback   = '?';  // drawn for code points the atlas lacks
 };
 
+// How the HDR scene becomes display values.
+//   Filmic   — ACES (Narkowicz fit). Rolls off highlights, and its toe crushes dark
+//              values: a linear 0.02 comes out near 0.01.
+//   Standard — none: linear to the display as it is, clipped at 1. A scene lit to
+//              stay in range keeps its dark colours.
+enum class ViewTransform { Filmic, Standard };
+
 class DiligentSceneRenderer final : public ISceneRenderer, public IOverlayRenderer {
 public:
     explicit DiligentSceneRenderer(RenderDevice& device);
@@ -197,7 +204,8 @@ public:
     void SetOutputTarget(OffscreenTarget& target);
     void ClearOutputTarget();
 
-    void             SetExposure(float exposure);   // HDR multiplier before ACES (default 1)
+    void             SetExposure(float exposure);   // HDR multiplier before the view transform (default 1)
+    void             SetViewTransform(ViewTransform transform);   // Filmic by default
     void             SetViewStyle(const ViewStyle& style);
     const ViewStyle& GetViewStyle() const;
     FrameStats       LastFrameStats() const;
@@ -245,6 +253,7 @@ public:
     TextureHandle CompositeFaceTint(TextureHandle base, std::span<const FaceTintLayer> layers) override;
 
     void SetLight(const glm::vec3& dir, const glm::vec3& color, const glm::vec3& ambient) override;
+    void SetPointLights(std::span<const PointLight> lights) override;
     // The infinite ground grid (Z = 0), drawn at EndFrame over the tone-mapped image
     // and depth-tested against the scene: minor lines every `cellSize`, fading out
     // `cellSize * halfExtent` from the camera.

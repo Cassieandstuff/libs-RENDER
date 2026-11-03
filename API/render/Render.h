@@ -110,6 +110,15 @@ struct TerrainSurface {
     bool          useVertexColor = false;             // apply VCLR × 2 modulation
 };
 
+// ── Point lights ──────────────────────────────────────────────────────────────
+// A light placed in the world. `color` is linear radiance at a unit's distance
+// before the falloff; `radius` is where it reaches zero (world units).
+struct PointLight {
+    glm::vec3 position{ 0.f };
+    glm::vec3 color{ 1.f };
+    float     radius = 100.f;
+};
+
 // ── Face-tint composite layer ─────────────────────────────────────────────────
 // One layer for CompositeFaceTint — the RaceMenu / facegen face-tint model. Each
 // layer takes a coverage mask (grayscale/alpha .dds) and a tint colour, and is
@@ -308,6 +317,11 @@ struct ISceneRenderer {
     virtual void SetLight(const glm::vec3& dir,
                           const glm::vec3& color,
                           const glm::vec3& ambient)                          = 0;
+
+    // The point lights this frame, beside SetLight's directional one. A renderer
+    // keeps as many as it can and may ignore the rest; call it before draw calls.
+    // Optional, with a default, so renderers written before it build unchanged.
+    virtual void SetPointLights(std::span<const PointLight> lights)           { (void)lights; }
 
     virtual void DrawGrid(float cellSize = 1.f, int halfExtent = 10)          = 0;
 

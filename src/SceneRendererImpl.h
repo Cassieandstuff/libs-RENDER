@@ -86,7 +86,9 @@ struct DiligentSceneRenderer::Impl {
     glm::vec3 lightDir{ 0.371f, 0.928f, 0.0f };   // towards the light
     glm::vec3 lightColor{ 1.0f, 0.98f, 0.92f };
     glm::vec3 ambient{ 0.12f, 0.13f, 0.18f };
+    std::vector<PointLight> pointLights;
     float     exposure = 1.f;
+    ViewTransform viewTransform = ViewTransform::Filmic;
 
     // ── Post (tone map over the background into the output) ──
     struct PostPipeline {

@@ -143,7 +143,8 @@ void main(in uint id : SV_VertexID, out PSIn o) {
 }
 )";
 
-// ── Post: exposure + ACES (Narkowicz fit), the same curve as SCT's GL renderer,
+// ── Post: exposure + the view transform (ACES, the Narkowicz fit and the same curve
+// as SCT's GL renderer, or none),
 // composited over the background. The scene target is cleared to transparent and
 // every pass writes premultiplied colour + coverage, so the background is exact
 // (display space, untouched by exposure or the tone curve).
@@ -152,7 +153,7 @@ void main(in uint id : SV_VertexID, out PSIn o) {
 inline constexpr const char* kPostPS = R"(
 Texture2D<float4> g_HDR;
 cbuffer PostCB {
-    float4 g_Params;       // x = exposure
+    float4 g_Params;       // x = exposure, y = 1 for no tone curve
     float4 g_Background;   // linear rgb
 }
 struct PSIn { float4 pos : SV_POSITION; float2 uv : TEX_COORD; };
@@ -163,7 +164,8 @@ float3 Aces(float3 x) {
 float4 main(in PSIn i) : SV_Target {
     float4 hdr = g_HDR.Load(int3(int2(i.pos.xy), 0));
     float  a   = saturate(hdr.a);
-    float3 ldr = a > 0.0 ? Aces(hdr.rgb / max(hdr.a, 1e-4) * g_Params.x) : float3(0.0, 0.0, 0.0);
+    float3 lit = hdr.rgb / max(hdr.a, 1e-4) * g_Params.x;
+    float3 ldr = a > 0.0 ? (g_Params.y != 0.0 ? saturate(lit) : Aces(lit)) : float3(0.0, 0.0, 0.0);
     ldr = lerp(g_Background.rgb, ldr, a);
 #if OUTPUT_GAMMA
     ldr = pow(ldr, 1.0 / 2.2);

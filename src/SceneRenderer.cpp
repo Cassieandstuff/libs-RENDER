@@ -163,7 +163,8 @@ void DiligentSceneRenderer::Impl::RunPost(ITextureView* outputRTV) {
     {
         MapHelper<float> cb(context, postCB, MAP_WRITE, MAP_FLAG_DISCARD);
         cb[0] = exposure;
-        cb[1] = cb[2] = cb[3] = 0.f;
+        cb[1] = viewTransform == ViewTransform::Standard ? 1.f : 0.f;
+        cb[2] = cb[3] = 0.f;
         for (int i = 0; i < 3; ++i) cb[4 + i] = SrgbToLinear(style.background[i]);
         cb[7] = 1.f;
     }
@@ -274,6 +275,8 @@ void DiligentSceneRenderer::ClearOutputTarget() {
 }
 
 void             DiligentSceneRenderer::SetExposure(float exposure) { m_impl->exposure = exposure; }
+void             DiligentSceneRenderer::SetViewTransform(ViewTransform transform) { m_impl->viewTransform = transform; }
+void             DiligentSceneRenderer::SetPointLights(std::span<const PointLight> lights) { m_impl->pointLights.assign(lights.begin(), lights.end()); }
 void             DiligentSceneRenderer::SetViewStyle(const ViewStyle& style) { m_impl->style = style; }
 const ViewStyle& DiligentSceneRenderer::GetViewStyle() const { return m_impl->style; }
 FrameStats       DiligentSceneRenderer::LastFrameStats() const { return m_impl->lastStats; }

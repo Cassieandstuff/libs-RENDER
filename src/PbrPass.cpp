@@ -15,6 +15,7 @@
 
 #include <glm/gtc/packing.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <cstring>
@@ -32,6 +33,7 @@ using namespace Diligent;
 namespace {
 
 constexpr Uint32 kMaxJoints = 256;
+constexpr Uint32 kMaxLights = 33;   // the directional light and 32 point lights
 
 // One buffer slot per attribute, slot = PBR attribute index. Static storage:
 // PBR_Renderer copies the layout, but keep it valid regardless.
@@ -184,7 +186,7 @@ void WriteFrameAttribs(DiligentSceneRenderer::Impl& r, PbrState& st) {
     p.OcclusionStrength = 1.f;
     p.EmissionScale     = 1.f;
     p.PointSize         = 1.f;
-    p.LightCount        = 1;
+    p.LightCount        = static_cast<int>(1 + std::min<std::size_t>(r.pointLights.size(), kMaxLights - 1));
 
     // Our light direction points towards the light; PBR's is the light's travel.
     const glm::vec3 travel = -glm::normalize(r.lightDir);
@@ -198,6 +200,21 @@ void WriteFrameAttribs(DiligentSceneRenderer::Impl& r, PbrState& st) {
     L.IntensityR = r.lightColor.r;
     L.IntensityG = r.lightColor.g;
     L.IntensityB = r.lightColor.b;
+
+    for (int i = 1; i < p.LightCount; ++i) {
+        const PointLight&      point = r.pointLights[static_cast<std::size_t>(i - 1)];
+        HLSL::PBRLightAttribs& out   = lights[i];
+        out.Type           = PBR_Renderer::LIGHT_TYPE_POINT;
+        out.PosX           = point.position.x;
+        out.PosY           = point.position.y;
+        out.PosZ           = point.position.z;
+        out.ShadowMapIndex = -1;
+        out.IntensityR     = point.color.r;
+        out.IntensityG     = point.color.g;
+        out.IntensityB     = point.color.b;
+        const float radius2 = point.radius * point.radius;
+        out.Range4          = radius2 * radius2;
+    }
 }
 
 PBR_Renderer::PSO_FLAGS FlagsFor(const MappedMaterial& m) {
@@ -271,7 +288,7 @@ PbrPtr CreatePbrState(DiligentSceneRenderer::Impl& r) {
     ci.EnableSpecular                 = true;
     ci.PackMatrixRowMajor             = true;   // raw glm bytes (see MathConv.h)
     ci.PackVertexColors               = true;
-    ci.MaxLightCount                  = 1;
+    ci.MaxLightCount                  = kMaxLights;
     ci.MaxJointCount                  = kMaxJoints;
     ci.JointsBufferMode               = PBR_Renderer::JOINTS_BUFFER_MODE_UNIFORM;
     ci.MaxActiveMorphTargetCount      = 0;      // morphs are blended on the CPU
