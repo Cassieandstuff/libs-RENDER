@@ -44,7 +44,7 @@ MappedMaterial MapMaterial(const DrawSurface& s, const MaterialInputs& in) {
         case Blend::AlphaBlend:
         case Blend::Additive:
             m.alpha      = MappedMaterial::Alpha::Blend;
-            m.depthWrite = false;
+            m.depthWrite = s.blendWritesDepth;
             break;
     }
 

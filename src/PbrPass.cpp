@@ -337,6 +337,7 @@ PbrPtr CreatePbrState(DiligentSceneRenderer::Impl& r) {
     for (auto flags : { base, base | PBR_Renderer::PSO_FLAG_USE_JOINTS })
         for (auto alpha : { PBR_Renderer::ALPHA_MODE_OPAQUE, PBR_Renderer::ALPHA_MODE_MASK })
             st->accessors[0][1].Get({ PBR_Renderer::RenderPassType::Main, flags & st->enabledFlags, alpha, CULL_MODE_BACK }, get);
+    st->accessors[0][1].Get({ PBR_Renderer::RenderPassType::Main, (base | PBR_Renderer::PSO_FLAG_USE_JOINTS) & st->enabledFlags, PBR_Renderer::ALPHA_MODE_BLEND, CULL_MODE_BACK }, get);
     return st;
 }
 

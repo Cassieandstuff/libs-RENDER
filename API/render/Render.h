@@ -95,6 +95,9 @@ struct DrawSurface {
     float         texTileRate     = 6.f;     // UV tile scale for terrain mode
     BlendMode     blendMode       = BlendMode::Opaque;
     float         alphaThreshold  = 0.5f;   // normalised; only used for AlphaTest mode
+    // A blended surface normally leaves depth alone. A material can ask otherwise (SLSF2_ZBuffer_Write, as Skyrim's
+    // human eyes do), so nothing drawn after it paints over it.
+    bool          blendWritesDepth = false;
 };
 
 // ── Terrain draw surface ──────────────────────────────────────────────────────

@@ -16,8 +16,8 @@
 //   useVertexColor       USE_VERTEX_COLORS (when the mesh has colours)
 //   twoSided             cull none
 //   AlphaTest(+Blend)    MASK at alphaThreshold
-//   AlphaBlend/Additive  BLEND (premultiplied) without depth write; Additive is
-//                        approximated by BLEND
+//   AlphaBlend/Additive  BLEND (premultiplied), writing depth only for
+//                        blendWritesDepth; Additive is approximated by BLEND
 //   xray                 BLEND at alpha 0.35, no depth write, no culling
 //   wireframe            the wireframe pipeline, when the device supports it
 #include <render/Render.h>

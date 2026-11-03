@@ -133,6 +133,10 @@ int main() {
     s.blendMode = Blend::AlphaBlend;
     m = MapMaterial(s, MaterialInputs{});
     check("AlphaBlend -> BLEND, no depth write", m.alpha == Alpha::Blend && !m.depthWrite);
+    s.blendWritesDepth = true;
+    m = MapMaterial(s, MaterialInputs{});
+    check("blendWritesDepth -> BLEND with depth write", m.alpha == Alpha::Blend && m.depthWrite);
+    s.blendWritesDepth = false;
     s.blendMode = Blend::Additive;
     m = MapMaterial(s, MaterialInputs{});
     check("Additive -> BLEND approximation, no depth write", m.alpha == Alpha::Blend && !m.depthWrite);
