@@ -56,6 +56,7 @@ DiligentSceneRenderer::Impl::Impl(RenderDevice& dev)
     lighting = CreateLightingState(*this);
     tint   = CreateFaceTintState(*this);
     overlay = CreateOverlayState(*this);
+    pick    = CreatePickState(*this);
 }
 
 DiligentSceneRenderer::Impl::~Impl() {
@@ -297,6 +298,9 @@ void DiligentSceneRenderer::BeginFrame(int width, int height) {
     r.gridRequested = false;
     r.queue.clear();   // a frame that never ended
     r.queuedBones.clear();
+    r.pickRequested = false;
+    r.pickDraws.clear();
+    r.pickBones.clear();
     OverlayBeginFrame(r);
 
     r.BindSceneTargets();
@@ -334,6 +338,7 @@ void DiligentSceneRenderer::EndFrame() {
     Impl& r = *m_impl;
     if (!r.inFrame) return;
     r.FlushQueue();
+    if (r.pickRequested) PickRun(r);
     if (ITextureView* out = r.OutputRTV()) {
         r.RunPost(out);
         if (r.gridRequested) r.RunGrid(out);

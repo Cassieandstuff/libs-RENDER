@@ -76,6 +76,15 @@ void DiligentSceneRenderer::Impl::FlushQueue() {
         if (d->surface.model == MaterialModel::Pbr) PbrDraw(*this, *mesh, d->world, bones, d->surface);
         else LightingDraw(*this, *mesh, d->world, bones, d->surface);   // Effect falls back to Lighting for now
     }
+    // A pick (asked for at any point in the frame) replays the frame's pickable draws at EndFrame, whatever flushes came
+    // between, so they are kept.
+    for (const QueuedDraw& d : queue) {
+        if (!d.surface.pickId) continue;
+        QueuedDraw keep = d;
+        keep.boneOffset = static_cast<std::uint32_t>(pickBones.size());
+        pickBones.insert(pickBones.end(), queuedBones.begin() + d.boneOffset, queuedBones.begin() + d.boneOffset + d.boneCount);
+        pickDraws.push_back(keep);
+    }
     queue.clear();
     queuedBones.clear();
 }

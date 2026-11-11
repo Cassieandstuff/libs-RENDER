@@ -697,6 +697,61 @@ void TestLightingModel(RenderDevice& dev) {
     }
 }
 
+// ── 5c''. Picking: ids and depths read back from a rect ─────────────────────────
+void TestPick(RenderDevice& dev) {
+    std::printf("-- picking --\n");
+    PbrScene s(dev);   // camera on +Z at 3 looking at the origin
+    const MeshHandle farQ  = s.r.UploadMesh(MakeQuad(0.f));
+    MeshData small = MakeQuad(0.5f);
+    for (auto& p : small.positions) p = glm::vec3(p.x * 0.4f + 0.5f, p.y * 0.4f, p.z);   // a 0.8 quad right of centre
+    const MeshHandle nearQ = s.r.UploadMesh(small);
+    const MeshHandle ghost = s.r.UploadMesh(MakeQuad(1.f));   // in front of both, but not pickable
+    DrawSurface farS, nearS, ghostS;
+    farS.pickId  = 7;
+    nearS.pickId = 9;
+    const glm::ivec2 onNear = Project(s.proj * s.view, { 0.5f, 0.f, 0.5f }, PbrScene::W, PbrScene::H);
+    const glm::ivec2 onFar  = Project(s.proj * s.view, { -0.6f, 0.f, 0.f }, PbrScene::W, PbrScene::H);
+
+    auto pickAt = [&](int x0, int y0, int x1, int y1, bool withGhost) {
+        s.Render([&](auto& r) {
+            r.DrawMesh(farQ, glm::mat4(1.f), farS);
+            r.DrawMesh(nearQ, glm::mat4(1.f), nearS);
+            if (withGhost) r.DrawMesh(ghost, glm::mat4(1.f), ghostS);
+            r.RequestPick(x0, y0, x1, y1);
+        });
+        return s.r.TakePicks();
+    };
+
+    auto hits = pickAt(onNear.x, onNear.y, onNear.x + 1, onNear.y + 1, false);
+    check("a point pick over the near quad finds it alone", hits.size() == 1 && hits[0].id == 9);
+    if (!hits.empty()) {
+        std::printf("   near hit at (%.3f, %.3f, %.3f), depth %.4f\n", hits[0].position.x, hits[0].position.y, hits[0].position.z, hits[0].depth);
+        check("the hit's world position is on the near quad", std::abs(hits[0].position.z - 0.5f) < 0.02f && std::abs(hits[0].position.x - 0.5f) < 0.05f);
+    }
+    hits = pickAt(onFar.x, onFar.y, onFar.x + 1, onFar.y + 1, false);
+    check("a point pick over the far quad finds it", hits.size() == 1 && hits[0].id == 7);
+    hits = pickAt(0, 0, PbrScene::W, PbrScene::H, false);
+    check("a rect over both finds both, nearest first", hits.size() == 2 && hits[0].id == 9 && hits[1].id == 7);
+    hits = pickAt(onNear.x, onNear.y, onNear.x + 1, onNear.y + 1, true);
+    check("a surface with no pick id neither answers nor hides what is behind it", hits.size() == 1 && hits[0].id == 9);
+    hits = pickAt(1, 1, 2, 2, false);
+    check("a pick over nothing finds nothing", hits.empty());
+    check("a pick is answered once", s.r.TakePicks().empty());
+
+    // An alpha-tested hole lets the pick through to what lies behind.
+    DrawSurface holed = nearS;
+    holed.blendMode      = DrawSurface::BlendMode::AlphaTest;
+    holed.alphaThreshold = 0.5f;
+    holed.diffuse        = s.r.LoadTextureFromMemory(MakeDds4x4(255, 255, 255, 0), TexColorSpace::Srgb);   // clear
+    s.Render([&](auto& r) {
+        r.DrawMesh(farQ, glm::mat4(1.f), farS);
+        r.DrawMesh(nearQ, glm::mat4(1.f), holed);
+        r.RequestPick(onNear.x, onNear.y, onNear.x + 1, onNear.y + 1);
+    });
+    hits = s.r.TakePicks();
+    check("a pick goes through an alpha-tested hole", hits.size() == 1 && hits[0].id == 7);
+}
+
 // ── 5c'. UpdateMesh: new contents, even a new vertex count, under the same handle ─
 void TestUpdateMesh(RenderDevice& dev) {
     std::printf("-- UpdateMesh --\n");
@@ -1507,6 +1562,7 @@ int main(int argc, char** argv) {
     TestPbr(*dev);
     TestDrawQueue(*dev);
     TestLightingModel(*dev);
+    TestPick(*dev);
     TestUpdateMesh(*dev);
     TestFrameOrder(*dev);
     TestNormalMap(*dev);

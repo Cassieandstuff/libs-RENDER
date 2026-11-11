@@ -176,6 +176,8 @@ struct DrawSurface {
     BlendFactor   dstBlend        = BlendFactor::InvSrcAlpha;
     CompareFunc   alphaTestFunc   = CompareFunc::Greater;
     LightingParams lighting;
+    // Non-zero: picks (ISceneRenderer::RequestPick) report this surface by this id.
+    std::uint32_t pickId          = 0;
 };
 
 // ── Terrain draw surface ──────────────────────────────────────────────────────
@@ -194,6 +196,15 @@ struct TerrainSurface {
 // ── Point lights ──────────────────────────────────────────────────────────────
 // A light placed in the world. `color` is linear radiance at a unit's distance
 // before the falloff; `radius` is where it reaches zero (world units).
+// ── Picking ───────────────────────────────────────────────────────────────────
+// One surface a pick found: the nearest pixel of it inside the picked rect.
+struct PickHit {
+    std::uint32_t id       = 0;              // its DrawSurface::pickId
+    float         depth    = 1.f;            // depth of that pixel, 0 (near plane) .. 1 (far plane)
+    glm::vec3     position = { 0.f, 0.f, 0.f };   // world position of that pixel
+    int           x = 0, y = 0;              // the pixel (physical pixels, top-left origin)
+};
+
 struct PointLight {
     glm::vec3 position{ 0.f };
     glm::vec3 color{ 1.f };
@@ -394,6 +405,16 @@ struct ISceneRenderer {
     // caller wants drawn after everything so far, whatever it is. Optional, with a
     // default that does nothing, for renderers that draw at once.
     virtual void FlushScene() {}
+
+    // ── Picking ───────────────────────────────────────────────────────────────
+    // Ask this frame which pickable surfaces (DrawSurface::pickId) cover the pixels
+    // [x0, x1) × [y0, y1) (physical pixels, top-left origin; a point is a 1×1 rect).
+    // Call between BeginFrame and EndFrame; the surfaces are found in depth order, as
+    // the frame draws them (overlays don't count). TakePicks after EndFrame returns
+    // one hit per surface, nearest first, and waits for the GPU; empty when no pick
+    // was asked for or nothing pickable covers the rect. Optional, with defaults.
+    virtual void RequestPick(int x0, int y0, int x1, int y1) { (void)x0; (void)y0; (void)x1; (void)y1; }
+    virtual std::vector<PickHit> TakePicks() { return {}; }
 
     // ── GPU resource management ───────────────────────────────────────────────
     virtual MeshHandle    UploadMesh  (const MeshData& data)                  = 0;

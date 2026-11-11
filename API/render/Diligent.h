@@ -251,6 +251,8 @@ public:
     void SetCamera(const glm::mat4& view, const glm::mat4& proj) override;
     void EndFrame() override;
     void FlushScene() override;
+    void RequestPick(int x0, int y0, int x1, int y1) override;
+    std::vector<PickHit> TakePicks() override;
 
     MeshHandle    UploadMesh(const MeshData& data) override;
     void          FreeMesh(MeshHandle handle) override;
