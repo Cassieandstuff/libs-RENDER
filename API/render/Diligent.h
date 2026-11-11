@@ -167,6 +167,7 @@ struct ViewStyle {
     std::array<float, 3> axisX{ 0.78f, 0.26f, 0.26f };   // red = east
     std::array<float, 3> axisY{ 0.32f, 0.72f, 0.32f };   // green = north
     int                  gridMajorEvery = 4;             // a major line every N minor cells
+    int                  outlineWidth   = 2;             // DrawSurface::outlineColor's band, pixels (1..8)
 };
 
 // The overlay font, baked by the host (the renderer has no font rasteriser).

@@ -304,6 +304,8 @@ void DiligentSceneRenderer::BeginFrame(int width, int height) {
     r.pickBones.clear();
     r.wireDraws.clear();
     r.wireBones.clear();
+    r.outlineDraws.clear();
+    r.outlineBones.clear();
     OverlayBeginFrame(r);
 
     r.BindSceneTargets();

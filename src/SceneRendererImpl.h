@@ -159,6 +159,8 @@ struct DiligentSceneRenderer::Impl {
     WirePtr     wire{ nullptr, &DestroyWireState };
     std::vector<QueuedDraw> wireDraws;   // this frame's draws with a wireColor, drawn after the tone map
     std::vector<glm::mat4>  wireBones;
+    std::vector<QueuedDraw> outlineDraws;   // and with an outlineColor
+    std::vector<glm::mat4>  outlineBones;
 
     // ── Picking (PickPass.cpp) ──
     bool                    pickRequested = false;
@@ -198,7 +200,7 @@ TextureHandle FaceTintComposite(DiligentSceneRenderer::Impl& r, TextureHandle ba
 OverlayPtr CreateOverlayState(DiligentSceneRenderer::Impl& r);
 
 WirePtr CreateWireState(DiligentSceneRenderer::Impl& r);
-void    WireRun(DiligentSceneRenderer::Impl& r, Diligent::ITextureView* outputRTV);   // EndFrame, after the grid
+void    WireRun(DiligentSceneRenderer::Impl& r, Diligent::ITextureView* outputRTV);   // EndFrame, after the grid: outlines, wireframe
 
 PickPtr CreatePickState(DiligentSceneRenderer::Impl& r);
 void    PickRun(DiligentSceneRenderer::Impl& r);   // EndFrame, after the flush: draws pickDraws and reads the rect back

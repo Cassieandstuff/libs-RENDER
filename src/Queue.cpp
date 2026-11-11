@@ -88,6 +88,7 @@ void DiligentSceneRenderer::Impl::FlushQueue() {
     for (const QueuedDraw& d : queue) {
         if (d.surface.pickId) keep(d, pickDraws, pickBones);
         if (d.surface.wireColor.a) keep(d, wireDraws, wireBones);
+        if (d.surface.outlineColor.a) keep(d, outlineDraws, outlineBones);
     }
     queue.clear();
     queuedBones.clear();

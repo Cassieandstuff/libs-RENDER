@@ -186,6 +186,9 @@ struct DrawSurface {
     // Wireframe over shaded: alpha > 0 draws this surface's edges again in this colour (a display value, exact like an
     // overlay) over the finished frame, where the surface is visible. Needs the device's wireframe fill.
     Rgba8         wireColor       = { 0, 0, 0, 0 };
+    // Outline (selection): alpha > 0 paints a band around the visible part of this surface in this colour (a display
+    // value), over the finished frame. The band's width is the renderer's (DiligentSceneRenderer: ViewStyle::outlineWidth).
+    Rgba8         outlineColor    = { 0, 0, 0, 0 };
 };
 
 // ── Terrain draw surface ──────────────────────────────────────────────────────

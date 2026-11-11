@@ -1325,7 +1325,7 @@ void TestFrameOrder(RenderDevice& dev) {
     check("after FlushScene the later opaque quad lands over the flushed blend", flushed.r < sorted.r - 40 && flushed.g > flushed.r);
 }
 
-// ── 5e. Overlay points; wireframe over shaded ────────────────────────────────────
+// ── 5e. Overlay points; outlines; wireframe over shaded ─────────────────────────
 void TestPointsAndWire(RenderDevice& dev) {
     std::printf("-- overlay points, wireframe over shaded --\n");
     PbrScene s(dev);
@@ -1336,6 +1336,23 @@ void TestPointsAndWire(RenderDevice& dev) {
     const int across = ExactInRow(px, PbrScene::W, at.y, dot), down = ExactInColumn(px, PbrScene::W, at.x, 0, PbrScene::H, dot);
     std::printf("   6 px point: %d across, %d down\n", across, down);
     check("an overlay point is a square of its size", across >= 5 && across <= 7 && down >= 5 && down <= 7);
+
+    // Outline: a band ViewStyle::outlineWidth (2) pixels wide around the visible surface, in its exact colour.
+    {
+        const MeshHandle shape = s.r.UploadMesh(MakeQuad());
+        DrawSurface outlined;
+        outlined.tint         = { 0.05f, 1.f, 0.05f, 1.f };
+        outlined.outlineColor = { 250, 220, 20, 255 };
+        px = s.Render([&](auto& r) { r.DrawMesh(shape, glm::mat4(1.f), outlined); });
+        const int band = ExactInRow(px, PbrScene::W, PbrScene::H / 2, outlined.outlineColor);
+        std::printf("   outline: %d exact pixels across the middle row (two bands)\n", band);
+        check("an outline band shows on both sides, about its width each", band >= 3 && band <= 6);
+        check("inside the outline the surface shows", s.At(px, glm::vec3(0.f)).g > 100);
+        DrawSurface plain = outlined;
+        plain.outlineColor = { 0, 0, 0, 0 };
+        px = s.Render([&](auto& r) { r.DrawMesh(shape, glm::mat4(1.f), plain); });
+        check("no outline without an outline colour", ExactInRow(px, PbrScene::W, PbrScene::H / 2, outlined.outlineColor) == 0);
+    }
 
     if (!dev.supportsWireframe()) {
         std::printf("   (wireframe not supported on this device; wireframe over shaded skipped)\n");
