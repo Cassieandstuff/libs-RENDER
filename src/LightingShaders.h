@@ -24,6 +24,10 @@
 //   PARALLAX                g_Height offsets the UVs along the view
 //   ALPHA_TEST              discard by g_Alpha (threshold, function)
 //   NORMAL_MAP_GREEN_UP     the normal map's green points to -V (OpenGL style); 0 = towards +V
+//   EFFECT                  the Effect model instead: unlit, g_Diffuse × base colour × vertex colour, then:
+//     PALETTE               g_Palette, a 2D gradient: across by the source's grey (or alpha), down by base × vertex colour
+//     FALLOFF               opacity by the view angle
+//     SOFT_DEPTH            fades out near what lies behind (g_SceneDepth, the scene before the blended draws)
 namespace render::diligent::shaders {
 
 inline constexpr const char* kLightingCommon = R"(
@@ -40,6 +44,8 @@ cbuffer LightingFrame {
     float4   g_LightInfo;            // x = light count
     float4   g_LightPos[MAX_LIGHTS];   // xyz, w = radius
     float4   g_LightColor[MAX_LIGHTS]; // rgb
+    float4   g_InvProjZ;             // rows 2 and 3 of the inverse projection (depth 0..1 to view space)
+    float4   g_InvProjW;
 };
 cbuffer LightingDraw {
     float4x4 g_World;
@@ -50,6 +56,10 @@ cbuffer LightingDraw {
     float4   g_UV;                   // offset.xy, scale.zw
     float4   g_Alpha;                // threshold, function, additive (fog fades it out), blended (alpha is coverage)
     float4   g_Srgb;                 // 1 where the texture is sRGB: diffuse, glow, env, back light
+    float4   g_EffectColor;          // Effect: base colour rgb, alpha
+    float4   g_Falloff;              // Effect: start, stop (cosines), start opacity, stop opacity
+    float4   g_EffectFlags;          // Effect: soft depth, palette colour, palette alpha, palette sRGB
+    float4   g_EffectScale;          // Effect: x = base colour scale
 };
 )";
 
@@ -142,6 +152,12 @@ Texture2D<float4> g_BackLightMap; SamplerState g_BackLightMap_sampler;
 #if PARALLAX
 Texture2D<float4> g_Height;       SamplerState g_Height_sampler;
 #endif
+#if PALETTE
+Texture2D<float4> g_Palette;      SamplerState g_Palette_sampler;
+#endif
+#if SOFT_DEPTH
+Texture2D<float>  g_SceneDepth;
+#endif
 
 struct PSIn {
     float4 pos   : SV_POSITION;
@@ -216,10 +232,67 @@ void AddLight(Surface s, float3 l, float3 color, inout float3 diffuse, inout flo
     spec += color * pow(saturate(dot(s.n, h)), s.gloss) * saturate(ndl) * s.specMask;
 }
 
+float3 ApplyFog(float3 color, float3 world) {
+    if (g_FogNearColor.w > 0.5) {
+        float dist = length(g_CameraPos.xyz - world);
+        float t    = saturate((dist - g_Fog.x) / max(g_Fog.y - g_Fog.x, 1e-3));
+        float fog  = min(pow(t, max(g_Fog.z, 1e-3)), 1.0) * g_Fog.w;
+        if (g_Alpha.z > 0.5) color *= 1.0 - fog;   // additive: fog fades the light out
+        else color = lerp(color, lerp(g_FogNearColor.rgb, g_FogFarColor.rgb, t), fog);
+    }
+    return color;
+}
+
+// Distance along the view (positive) for a depth value 0..1 at this pixel.
+float ViewDepth(float depth) {
+    float4 p = float4(0.0, 0.0, depth, 1.0);
+    return -dot(g_InvProjZ, p) / dot(g_InvProjW, p);
+}
+
+#if EFFECT
+float4 EffectMain(PSIn i, float3 v, float2 uv) {
+    float4 src  = g_Diffuse.Sample(g_Diffuse_sampler, uv);
+    float3 c    = Stored(src.rgb, g_Srgb.x);
+    float  a    = src.a;
+    float3 tint = g_EffectColor.rgb * i.color.rgb;
+    float  ta   = g_EffectColor.a * i.color.a;
+#if PALETTE
+    // The gradient's row is the tint: it picks the colour rather than multiplying it.
+    if (g_EffectFlags.y > 0.5) {
+        c    = Stored(g_Palette.Sample(g_Palette_sampler, float2(saturate(c.g), saturate(tint.r * g_EffectScale.x))).rgb, g_EffectFlags.w);
+        tint = float3(1.0, 1.0, 1.0);
+    }
+    if (g_EffectFlags.z > 0.5) {
+        a  = g_Palette.Sample(g_Palette_sampler, float2(saturate(a), saturate(ta))).a;
+        ta = 1.0;
+    }
+#endif
+    c *= tint * g_EffectScale.x;
+    a *= ta;
+#if FALLOFF
+    float ndv = abs(dot(normalize(i.nrm), v));
+    float t   = saturate((ndv - g_Falloff.y) / max(g_Falloff.x - g_Falloff.y, 1e-4));
+    a *= lerp(g_Falloff.w, g_Falloff.z, t);
+#endif
+#if SOFT_DEPTH
+    float behind = ViewDepth(g_SceneDepth.Load(int3(int2(i.pos.xy), 0)));
+    a *= saturate((behind - ViewDepth(i.pos.z)) / max(g_EffectFlags.x, 1e-3));
+#endif
+#if ALPHA_TEST
+    if (!AlphaPasses(a, g_Alpha.x, (int)g_Alpha.y)) discard;
+#endif
+    c = ApplyFog(c, i.world);
+    return float4(SrgbToLinear(c), g_Alpha.w > 0.5 ? a : 1.0);
+}
+#endif
+
 float4 main(in PSIn i, bool front : SV_IsFrontFace) : SV_Target {
     float3 v  = normalize(g_CameraPos.xyz - i.world);
-    float3 gn = normalize(i.nrm) * (front ? 1.0 : -1.0);
     float2 uv = i.uv;
+#if EFFECT
+    return EffectMain(i, v, uv);
+#else
+    float3 gn = normalize(i.nrm) * (front ? 1.0 : -1.0);
 
     // Cotangent frame from screen derivatives: T along +U, B along +V.
     float3 dp1 = ddx(i.world), dp2 = ddy(i.world);
@@ -312,15 +385,10 @@ float4 main(in PSIn i, bool front : SV_IsFrontFace) : SV_Target {
     color += g_Emissive.rgb;
 #endif
 
-    if (g_FogNearColor.w > 0.5) {
-        float dist = length(g_CameraPos.xyz - i.world);
-        float t    = saturate((dist - g_Fog.x) / max(g_Fog.y - g_Fog.x, 1e-3));
-        float fog  = min(pow(t, max(g_Fog.z, 1e-3)), 1.0) * g_Fog.w;
-        if (g_Alpha.z > 0.5) color *= 1.0 - fog;   // additive: fog fades the light out
-        else color = lerp(color, lerp(g_FogNearColor.rgb, g_FogFarColor.rgb, t), fog);
-    }
+    color = ApplyFog(color, i.world);
     // Unblended surfaces cover the pixel whatever their texture's alpha holds (often a mask).
     return float4(SrgbToLinear(color), g_Alpha.w > 0.5 ? alpha : 1.0);
+#endif
 }
 )";
 

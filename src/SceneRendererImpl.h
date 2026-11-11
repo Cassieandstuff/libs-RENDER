@@ -174,6 +174,9 @@ struct DiligentSceneRenderer::Impl {
     std::vector<glm::mat4>  pickBones;
     std::vector<PickHit>    pickHits;     // the last answered pick
 
+    // The scene depth as it stood before the blended draws, for soft effects (copied by FlushQueue when one asks).
+    RefCntAutoPtr<Diligent::ITexture> sceneDepthCopy;
+
     // ── Draw queue (Queue.cpp) ──
     std::vector<QueuedDraw> queue;
     std::vector<glm::mat4>  queuedBones;
