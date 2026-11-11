@@ -78,12 +78,16 @@ void DiligentSceneRenderer::Impl::FlushQueue() {
     }
     // A pick (asked for at any point in the frame) replays the frame's pickable draws at EndFrame, whatever flushes came
     // between, so they are kept.
+    // Wireframe over shaded is drawn after the tone map, so those draws are kept too.
+    auto keep = [&](const QueuedDraw& d, std::vector<QueuedDraw>& draws, std::vector<glm::mat4>& bones) {
+        QueuedDraw k = d;
+        k.boneOffset = static_cast<std::uint32_t>(bones.size());
+        bones.insert(bones.end(), queuedBones.begin() + d.boneOffset, queuedBones.begin() + d.boneOffset + d.boneCount);
+        draws.push_back(k);
+    };
     for (const QueuedDraw& d : queue) {
-        if (!d.surface.pickId) continue;
-        QueuedDraw keep = d;
-        keep.boneOffset = static_cast<std::uint32_t>(pickBones.size());
-        pickBones.insert(pickBones.end(), queuedBones.begin() + d.boneOffset, queuedBones.begin() + d.boneOffset + d.boneCount);
-        pickDraws.push_back(keep);
+        if (d.surface.pickId) keep(d, pickDraws, pickBones);
+        if (d.surface.wireColor.a) keep(d, wireDraws, wireBones);
     }
     queue.clear();
     queuedBones.clear();

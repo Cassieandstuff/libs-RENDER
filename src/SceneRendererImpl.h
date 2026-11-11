@@ -69,17 +69,20 @@ struct LightingState;  // LightingPass.cpp
 struct FaceTintState;  // FaceTintPass.cpp
 struct OverlayState;   // Overlay.cpp
 struct PickState;      // PickPass.cpp
+struct WireState;      // WirePass.cpp
 void DestroyPbrState(PbrState* p);
 void DestroyLightingState(LightingState* p);
 void DestroyFaceTintState(FaceTintState* t);
 void DestroyOverlayState(OverlayState* o);
 void DestroyPickState(PickState* p);
+void DestroyWireState(WireState* p);
 // Owning pointers to the pass states, deleted in their own files.
 using PbrPtr      = std::unique_ptr<PbrState, decltype(&DestroyPbrState)>;
 using LightingPtr = std::unique_ptr<LightingState, decltype(&DestroyLightingState)>;
 using FaceTintPtr = std::unique_ptr<FaceTintState, decltype(&DestroyFaceTintState)>;
 using OverlayPtr  = std::unique_ptr<OverlayState, decltype(&DestroyOverlayState)>;
 using PickPtr     = std::unique_ptr<PickState, decltype(&DestroyPickState)>;
+using WirePtr     = std::unique_ptr<WireState, decltype(&DestroyWireState)>;
 
 // The scene pass's depth format (the grid and the world overlays test against it).
 inline constexpr Diligent::TEXTURE_FORMAT kSceneDepthFormat = Diligent::TEX_FORMAT_D32_FLOAT;
@@ -153,6 +156,9 @@ struct DiligentSceneRenderer::Impl {
     FaceTintPtr tint{ nullptr, &DestroyFaceTintState };
     OverlayPtr  overlay{ nullptr, &DestroyOverlayState };
     PickPtr     pick{ nullptr, &DestroyPickState };
+    WirePtr     wire{ nullptr, &DestroyWireState };
+    std::vector<QueuedDraw> wireDraws;   // this frame's draws with a wireColor, drawn after the tone map
+    std::vector<glm::mat4>  wireBones;
 
     // ── Picking (PickPass.cpp) ──
     bool                    pickRequested = false;
@@ -190,6 +196,9 @@ FaceTintPtr CreateFaceTintState(DiligentSceneRenderer::Impl& r);
 TextureHandle FaceTintComposite(DiligentSceneRenderer::Impl& r, TextureHandle base, std::span<const FaceTintLayer> layers);
 
 OverlayPtr CreateOverlayState(DiligentSceneRenderer::Impl& r);
+
+WirePtr CreateWireState(DiligentSceneRenderer::Impl& r);
+void    WireRun(DiligentSceneRenderer::Impl& r, Diligent::ITextureView* outputRTV);   // EndFrame, after the grid
 
 PickPtr CreatePickState(DiligentSceneRenderer::Impl& r);
 void    PickRun(DiligentSceneRenderer::Impl& r);   // EndFrame, after the flush: draws pickDraws and reads the rect back

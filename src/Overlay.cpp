@@ -313,6 +313,16 @@ void DiligentSceneRenderer::DrawOverlayLines(std::span<const OverlayVertex> segm
     o.Push(LayerOf(depth), Prim::Lines, first, o.lines.size() - first);
 }
 
+void DiligentSceneRenderer::DrawOverlayPoints(std::span<const OverlayVertex> points, float sizePx, OverlayDepth depth) {
+    if (!m_impl->inFrame) return;
+    // A zero-length line instance: the line shader draws it as a sizePx square (its square caps reach half the width
+    // each way along a default direction, the sides half the width across).
+    OverlayState&     o     = *m_impl->overlay;
+    const std::size_t first = o.lines.size();
+    for (const OverlayVertex& p : points) o.lines.push_back({ p.pos, Pack(p.color), p.pos, Pack(p.color), sizePx });
+    o.Push(LayerOf(depth), Prim::Lines, first, o.lines.size() - first);
+}
+
 void DiligentSceneRenderer::DrawOverlayTriangles(std::span<const OverlayVertex> triangles, OverlayDepth depth) {
     if (!m_impl->inFrame) return;
     OverlayState&     o     = *m_impl->overlay;

@@ -67,6 +67,11 @@ struct MeshData {
     std::vector<uint32_t>    indices32;
 };
 
+// 8-bit RGBA, display space (as it appears on screen, like a UI colour); a = opacity.
+struct Rgba8 {
+    std::uint8_t r = 255, g = 255, b = 255, a = 255;
+};
+
 // ── Material models ───────────────────────────────────────────────────────────
 // How a surface is shaded:
 //   Pbr       metal/roughness PBR with image-based ambient (True-PBR meshes, the
@@ -178,6 +183,9 @@ struct DrawSurface {
     LightingParams lighting;
     // Non-zero: picks (ISceneRenderer::RequestPick) report this surface by this id.
     std::uint32_t pickId          = 0;
+    // Wireframe over shaded: alpha > 0 draws this surface's edges again in this colour (a display value, exact like an
+    // overlay) over the finished frame, where the surface is visible. Needs the device's wireframe fill.
+    Rgba8         wireColor       = { 0, 0, 0, 0 };
 };
 
 // ── Terrain draw surface ──────────────────────────────────────────────────────
@@ -270,11 +278,6 @@ struct FaceTintLayer {
 // like a UI colour. Widths and screen positions are PHYSICAL pixels (the host
 // scales by its device pixel ratio).
 
-// 8-bit RGBA, display space; a = opacity.
-struct Rgba8 {
-    std::uint8_t r = 255, g = 255, b = 255, a = 255;
-};
-
 struct OverlayVertex {   // world (render) space
     glm::vec3 pos{ 0.f };
     Rgba8     color;
@@ -350,6 +353,11 @@ struct IOverlayRenderer {
     virtual void DrawOverlayLines(std::span<const OverlayVertex> segments, float widthPx, OverlayDepth depth) = 0;
     // World-space flat triangles (vertex triples), not culled.
     virtual void DrawOverlayTriangles(std::span<const OverlayVertex> triangles, OverlayDepth depth) = 0;
+    // World-space points, each a square `sizePx` physical pixels across, centred on its position. Optional, with a
+    // default that draws nothing, for renderers written before it.
+    virtual void DrawOverlayPoints(std::span<const OverlayVertex> points, float sizePx, OverlayDepth depth) {
+        (void)points; (void)sizePx; (void)depth;
+    }
 
     // Screen-space (physical pixels, top-left origin), always on top, drawn last.
     virtual void DrawScreenLines(std::span<const ScreenVertex> segments, float widthPx) = 0;

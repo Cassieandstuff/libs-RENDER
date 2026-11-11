@@ -1325,6 +1325,44 @@ void TestFrameOrder(RenderDevice& dev) {
     check("after FlushScene the later opaque quad lands over the flushed blend", flushed.r < sorted.r - 40 && flushed.g > flushed.r);
 }
 
+// ── 5e. Overlay points; wireframe over shaded ────────────────────────────────────
+void TestPointsAndWire(RenderDevice& dev) {
+    std::printf("-- overlay points, wireframe over shaded --\n");
+    PbrScene s(dev);
+    const Rgba8 dot{ 240, 30, 200, 255 };
+    const OverlayVertex point{ glm::vec3(0.f), dot };
+    auto px = s.Render([&](auto& r) { r.DrawOverlayPoints({ &point, 1 }, 6.f, OverlayDepth::OnTop); });
+    const glm::ivec2 at = Project(s.proj * s.view, glm::vec3(0.f), PbrScene::W, PbrScene::H);
+    const int across = ExactInRow(px, PbrScene::W, at.y, dot), down = ExactInColumn(px, PbrScene::W, at.x, 0, PbrScene::H, dot);
+    std::printf("   6 px point: %d across, %d down\n", across, down);
+    check("an overlay point is a square of its size", across >= 5 && across <= 7 && down >= 5 && down <= 7);
+
+    if (!dev.supportsWireframe()) {
+        std::printf("   (wireframe not supported on this device; wireframe over shaded skipped)\n");
+        return;
+    }
+    const MeshHandle quad = s.r.UploadMesh(MakeQuad());
+    DrawSurface green, wired;
+    green.tint      = { 0.05f, 1.f, 0.05f, 1.f };
+    wired           = green;
+    wired.wireColor = { 255, 40, 40, 255 };
+    // The quad's diagonal (its two triangles share it) runs from (-1,-1) to (1,1): (0.3, 0.3) lies on it.
+    px = s.Render([&](auto& r) { r.DrawMesh(quad, glm::mat4(1.f), wired); });
+    const Rgba onEdge = Strongest(px, PbrScene::W, PbrScene::H, Project(s.proj * s.view, { 0.3f, 0.3f, 0.f }, PbrScene::W, PbrScene::H), 0);
+    const Rgba inside = s.At(px, { 0.5f, -0.5f, 0.f });
+    std::printf("   on the diagonal (%d,%d,%d), inside (%d,%d,%d)\n", onEdge.r, onEdge.g, onEdge.b, inside.r, inside.g, inside.b);
+    check("wireframe over shaded draws the edges in their colour", onEdge.r > 200 && onEdge.g < 120);
+    check("between the edges the shaded surface shows", inside.g > inside.r + 30);
+    // Hidden behind a nearer surface, the edges don't show.
+    const MeshHandle cover = s.r.UploadMesh(MakeQuad(0.5f));
+    px = s.Render([&](auto& r) {
+        r.DrawMesh(quad, glm::mat4(1.f), wired);
+        r.DrawMesh(cover, glm::mat4(1.f), green);
+    });
+    const Rgba covered = Strongest(px, PbrScene::W, PbrScene::H, Project(s.proj * s.view, { 0.3f, 0.3f, 0.f }, PbrScene::W, PbrScene::H), 0);
+    check("edges behind a nearer surface are hidden", covered.r < 120);
+}
+
 
 void TestOverlayDepth(RenderDevice& dev) {
     std::printf("-- overlays: depth modes against a mesh --\n");
@@ -1565,6 +1603,7 @@ int main(int argc, char** argv) {
     TestPick(*dev);
     TestUpdateMesh(*dev);
     TestFrameOrder(*dev);
+    TestPointsAndWire(*dev);
     TestNormalMap(*dev);
     TestFaceTint(*dev);
     TestSkinTint(*dev);

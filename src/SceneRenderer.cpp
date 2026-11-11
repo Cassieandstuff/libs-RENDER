@@ -57,6 +57,7 @@ DiligentSceneRenderer::Impl::Impl(RenderDevice& dev)
     tint   = CreateFaceTintState(*this);
     overlay = CreateOverlayState(*this);
     pick    = CreatePickState(*this);
+    wire    = CreateWireState(*this);
 }
 
 DiligentSceneRenderer::Impl::~Impl() {
@@ -301,6 +302,8 @@ void DiligentSceneRenderer::BeginFrame(int width, int height) {
     r.pickRequested = false;
     r.pickDraws.clear();
     r.pickBones.clear();
+    r.wireDraws.clear();
+    r.wireBones.clear();
     OverlayBeginFrame(r);
 
     r.BindSceneTargets();
@@ -342,6 +345,7 @@ void DiligentSceneRenderer::EndFrame() {
     if (ITextureView* out = r.OutputRTV()) {
         r.RunPost(out);
         if (r.gridRequested) r.RunGrid(out);
+        WireRun(r, out);
         OverlayRun(r, out);
     }
     else LogOnce(r.warnedNoOutput, "EndFrame with no output target bound; the frame is not shown");

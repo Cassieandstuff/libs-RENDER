@@ -233,6 +233,7 @@ public:
     IOverlayRenderer* Overlays() override { return this; }
     void DrawOverlayLines(std::span<const OverlayVertex> segments, float widthPx, OverlayDepth depth) override;
     void DrawOverlayTriangles(std::span<const OverlayVertex> triangles, OverlayDepth depth) override;
+    void DrawOverlayPoints(std::span<const OverlayVertex> points, float sizePx, OverlayDepth depth) override;
     void DrawScreenLines(std::span<const ScreenVertex> segments, float widthPx) override;
     void DrawScreenTriangles(std::span<const ScreenVertex> triangles) override;
     void DrawScreenText(glm::vec2 pos, std::string_view utf8, Rgba8 color, TextAnchor anchor = {},
