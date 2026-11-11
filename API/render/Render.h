@@ -47,7 +47,7 @@ enum class TextureHandle : uint32_t { Invalid = 0 };
 // ── Mesh upload descriptor ─────────────────────────────────────────────────────
 // boneIndices / boneWeights are optional (leave empty for static meshes).
 // tangents are optional (xyz = tangent direction, w = handedness ±1); required
-// for normal-map shading.  indices are required; positions/normals/uvs must be
+// for normal-map shading.  indices (or indices32) are required; positions/normals/uvs must be
 // the same length.
 struct MeshData {
     std::vector<glm::vec3>   positions;
@@ -57,7 +57,13 @@ struct MeshData {
     std::vector<glm::u8vec4> boneIndices;   // 4 indices per vertex (uint8)
     std::vector<glm::vec4>   boneWeights;   // 4 weights per vertex, sum == 1
     std::vector<glm::u8vec3> vertexColors;  // optional RGB per vertex (0-255)
+    // Optional alpha per vertex (0-255), beside vertexColors (white when those are
+    // absent). Read wherever vertex colours are (DrawSurface::useVertexColor): it
+    // scales the surface's alpha for alpha test and blending.
+    std::vector<uint8_t>     vertexAlpha;
     std::vector<uint16_t>    indices;
+    // 32-bit indices, for meshes past 65535 vertices: used when `indices` is empty.
+    std::vector<uint32_t>    indices32;
 };
 
 // ── Per-draw surface parameters ───────────────────────────────────────────────
@@ -98,6 +104,15 @@ struct DrawSurface {
     // A blended surface normally leaves depth alone. A material can ask otherwise (SLSF2_ZBuffer_Write, as Skyrim's
     // human eyes do), so nothing drawn after it paints over it.
     bool          blendWritesDepth = false;
+    // False: drawn whatever lies in front of it (SLSF2_ZBuffer_Test off).
+    bool          depthTest       = true;
+    // Steps towards the camera, so a coplanar surface drawn over another wins the
+    // depth test: 1 for decals (SLSF1_Decal / Dynamic_Decal); 0 = none.
+    int           depthBias       = 0;
+    // Blended surfaces are drawn back to front. noSort keeps this one in submission
+    // order, right after the blended draw submitted before it (NiAlphaProperty's
+    // no-sorter bit).
+    bool          noSort          = false;
 };
 
 // ── Terrain draw surface ──────────────────────────────────────────────────────
@@ -268,7 +283,12 @@ struct IOverlayRenderer {
 //   BeginFrame(w, h)          — bind / resize the render target, clear
 //   SetCamera(view, proj)     — store matrices for this frame
 //   DrawGrid / DrawMesh / DrawSkinnedMesh  (any order)
-//   EndFrame()                — flush batched primitives, resolve the frame
+//   EndFrame()                — draw what was queued, resolve the frame
+//
+// Mesh draws are queued and drawn at EndFrame in an order of the renderer's
+// choosing: opaque surfaces, then alpha-tested ones, then blended ones back to
+// front by their bounds' centre (see DrawSurface::noSort). The camera and lights
+// in effect at EndFrame light the whole frame.
 struct ISceneRenderer {
     virtual ~ISceneRenderer() = default;
 

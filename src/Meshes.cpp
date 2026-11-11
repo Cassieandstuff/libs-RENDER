@@ -34,11 +34,19 @@ const GpuMesh* DiligentSceneRenderer::Impl::FindMesh(MeshHandle h) const {
 MeshHandle DiligentSceneRenderer::UploadMesh(const MeshData& data) {
     Impl& r = *m_impl;
     const std::size_t n = data.positions.size();
-    if (n == 0 || data.indices.empty() || n > 0xFFFF) return MeshHandle::Invalid;
+    const bool index32 = data.indices.empty();
+    if (n == 0 || (index32 && data.indices32.empty()) || (!index32 && n > 0x10000)) return MeshHandle::Invalid;
 
     GpuMesh m;
     m.vertexCount = static_cast<std::uint32_t>(n);
-    m.indexCount  = static_cast<std::uint32_t>(data.indices.size());
+    m.indexCount  = static_cast<std::uint32_t>(index32 ? data.indices32.size() : data.indices.size());
+    m.index32     = index32;
+    glm::vec3 lo = data.positions[0], hi = lo;
+    for (const glm::vec3& p : data.positions) {
+        lo = glm::min(lo, p);
+        hi = glm::max(hi, p);
+    }
+    m.boundsCentre = (lo + hi) * 0.5f;
 
     // Positions are DEFAULT usage so UpdateMeshPositions can overwrite them.
     m.positions = CreateVertexBuffer(r.device, "render mesh positions", data.positions, USAGE_DEFAULT);
@@ -59,19 +67,21 @@ MeshHandle DiligentSceneRenderer::UploadMesh(const MeshData& data) {
         m.weights = CreateVertexBuffer(r.device, "render mesh weights", data.boneWeights);
     }
 
-    // RGB → RGBA8 with opaque alpha (PackVertexColors reads 4 normalized bytes).
-    if (data.vertexColors.size() == n) {
+    // RGB (white when absent) + alpha (opaque when absent) → RGBA8 (PackVertexColors reads 4 normalized bytes).
+    const bool hasRgb = data.vertexColors.size() == n, hasAlpha = data.vertexAlpha.size() == n;
+    if (hasRgb || hasAlpha) {
         std::vector<glm::u8vec4> colors(n);
-        for (std::size_t i = 0; i < n; ++i) colors[i] = glm::u8vec4(data.vertexColors[i], 255);
+        for (std::size_t i = 0; i < n; ++i)
+            colors[i] = glm::u8vec4(hasRgb ? data.vertexColors[i] : glm::u8vec3(255), hasAlpha ? data.vertexAlpha[i] : 255);
         m.colors = CreateVertexBuffer(r.device, "render mesh colors", colors);
     }
 
     BufferDesc ib;
     ib.Name      = "render mesh indices";
-    ib.Size      = data.indices.size() * sizeof(std::uint16_t);
+    ib.Size      = index32 ? data.indices32.size() * sizeof(std::uint32_t) : data.indices.size() * sizeof(std::uint16_t);
     ib.Usage     = USAGE_IMMUTABLE;
     ib.BindFlags = BIND_INDEX_BUFFER;
-    BufferData ibData{ data.indices.data(), ib.Size };
+    BufferData ibData{ index32 ? static_cast<const void*>(data.indices32.data()) : data.indices.data(), ib.Size };
     r.device->CreateBuffer(ib, &ibData, &m.indices);
 
     if (!m.positions || !m.normals || !m.uvs || !m.indices) return MeshHandle::Invalid;

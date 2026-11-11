@@ -1,5 +1,7 @@
 #include "MaterialMapping.h"
 
+#include <algorithm>
+
 namespace render::diligent {
 
 MappedMaterial MapMaterial(const DrawSurface& s, const MaterialInputs& in) {
@@ -56,6 +58,8 @@ MappedMaterial MapMaterial(const DrawSurface& s, const MaterialInputs& in) {
     }
 
     m.wireframe = s.wireframe && in.wireframeOk;
+    m.depthTest = s.depthTest;
+    m.depthBias = std::clamp(s.depthBias, 0, 15);
     return m;
 }
 

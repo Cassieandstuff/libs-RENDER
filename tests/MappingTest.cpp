@@ -153,6 +153,17 @@ int main() {
     s.wireframe = true;
     check("wireframe when supported", MapMaterial(s, All()).wireframe);
     check("wireframe falls back to solid when unsupported", !MapMaterial(s, MaterialInputs{}).wireframe);
+    s = {};
+
+    // Depth state.
+    m = MapMaterial(s, MaterialInputs{});
+    check("depth test on, no bias by default", m.depthTest && m.depthBias == 0);
+    s.depthTest = false;
+    s.depthBias = 1;
+    m = MapMaterial(s, MaterialInputs{});
+    check("depthTest / depthBias pass through", !m.depthTest && m.depthBias == 1);
+    s.depthBias = 99;
+    check("depthBias is clamped to 15", MapMaterial(s, MaterialInputs{}).depthBias == 15);
 
     std::printf(g_failures == 0 ? "\nALL PASSED\n" : "\n%d CHECK(S) FAILED\n", g_failures);
     return g_failures;

@@ -92,8 +92,8 @@ float4x4 ToFloat4x4(const glm::mat4& m) {
 struct PbrState {
     std::unique_ptr<PBR_Renderer> renderer;
     PBR_Renderer::PSO_FLAGS       enabledFlags = PBR_Renderer::PSO_FLAG_NONE;
-    // [wireframe][depthWrite]
-    PBR_Renderer::PsoCacheAccessor accessors[2][2];
+    // PSO caches by fixed-function state (DepthState::Key), made on first use.
+    std::map<std::uint32_t, PBR_Renderer::PsoCacheAccessor> accessors;
 
     RefCntAutoPtr<IBuffer>  frameCB;
     RefCntAutoPtr<ITexture> envCube, irradiance, prefiltered;
@@ -110,6 +110,40 @@ struct PbrState {
 void DestroyPbrState(PbrState* p) { delete p; }
 
 namespace {
+
+// The fixed-function state a PSO cache is made for (PBR_Renderer keys the rest).
+struct DepthState {
+    bool wireframe  = false;
+    bool depthWrite = true;
+    bool depthTest  = true;
+    int  depthBias  = 0;   // steps towards the camera, 0..15
+    std::uint32_t Key() const {
+        return (wireframe ? 1u : 0u) | (depthWrite ? 2u : 0u) | (depthTest ? 4u : 0u) |
+               (static_cast<std::uint32_t>(std::clamp(depthBias, 0, 15)) << 3);
+    }
+};
+
+const PBR_Renderer::PsoCacheAccessor& AccessorFor(DiligentSceneRenderer::Impl& r, PbrState& st, const DepthState& s) {
+    auto [it, inserted] = st.accessors.try_emplace(s.Key());
+    if (!inserted) return it->second;
+    GraphicsPipelineDesc gd;
+    gd.NumRenderTargets                     = 1;
+    gd.RTVFormats[0]                        = TEX_FORMAT_RGBA16_FLOAT;
+    gd.DSVFormat                            = kSceneDepthFormat;
+    gd.PrimitiveTopology                    = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    gd.RasterizerDesc.FrontCounterClockwise = True;
+    gd.RasterizerDesc.FillMode              = s.wireframe && r.owner.supportsWireframe() ? FILL_MODE_WIREFRAME : FILL_MODE_SOLID;
+    // Towards the camera is towards depth 0 (LESS_EQUAL). The constant term covers flat decals, the slope term
+    // decals seen at a grazing angle.
+    const int bias                               = std::clamp(s.depthBias, 0, 15);
+    gd.RasterizerDesc.DepthBias                  = -64 * bias;
+    gd.RasterizerDesc.SlopeScaledDepthBias       = -2.f * static_cast<float>(bias);
+    gd.DepthStencilDesc.DepthEnable              = True;
+    gd.DepthStencilDesc.DepthWriteEnable         = s.depthWrite ? True : False;
+    gd.DepthStencilDesc.DepthFunc                = s.depthTest ? COMPARISON_FUNC_LESS_EQUAL : COMPARISON_FUNC_ALWAYS;
+    it->second = st.renderer->GetPsoCacheAccessor(gd);
+    return it->second;
+}
 
 void BuildIbl(DiligentSceneRenderer::Impl& r, PbrState& st) {
     TextureDesc desc;
@@ -308,23 +342,6 @@ PbrPtr CreatePbrState(DiligentSceneRenderer::Impl& r) {
     fb.CPUAccessFlags = CPU_ACCESS_WRITE;
     r.device->CreateBuffer(fb, nullptr, &st->frameCB);
 
-    for (int wire = 0; wire < 2; ++wire) {
-        if (wire && !r.owner.supportsWireframe()) continue;
-        for (int depthWrite = 0; depthWrite < 2; ++depthWrite) {
-            GraphicsPipelineDesc gd;
-            gd.NumRenderTargets                     = 1;
-            gd.RTVFormats[0]                        = TEX_FORMAT_RGBA16_FLOAT;
-            gd.DSVFormat                            = TEX_FORMAT_D32_FLOAT;
-            gd.PrimitiveTopology                    = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-            gd.RasterizerDesc.FrontCounterClockwise = True;
-            gd.RasterizerDesc.FillMode              = wire ? FILL_MODE_WIREFRAME : FILL_MODE_SOLID;
-            gd.DepthStencilDesc.DepthEnable         = True;
-            gd.DepthStencilDesc.DepthWriteEnable    = depthWrite ? True : False;
-            gd.DepthStencilDesc.DepthFunc           = COMPARISON_FUNC_LESS_EQUAL;
-            st->accessors[wire][depthWrite]         = st->renderer->GetPsoCacheAccessor(gd);
-        }
-    }
-
     BuildIbl(r, *st);
 
     // Prewarm the common permutations (static textured, alpha-tested, skinned).
@@ -334,10 +351,11 @@ PbrPtr CreatePbrState(DiligentSceneRenderer::Impl& r) {
                                           PBR_Renderer::PSO_FLAG_USE_NORMAL_MAP | PBR_Renderer::PSO_FLAG_USE_SPECULAR_MAP) &
                                          st->enabledFlags;
     const auto get = PBR_Renderer::PsoCacheAccessor::GET_FLAG_CREATE_IF_NULL | PBR_Renderer::PsoCacheAccessor::GET_FLAG_ASYNC_COMPILE;
+    const auto& solid = AccessorFor(r, *st, DepthState{});
     for (auto flags : { base, base | PBR_Renderer::PSO_FLAG_USE_JOINTS })
         for (auto alpha : { PBR_Renderer::ALPHA_MODE_OPAQUE, PBR_Renderer::ALPHA_MODE_MASK })
-            st->accessors[0][1].Get({ PBR_Renderer::RenderPassType::Main, flags & st->enabledFlags, alpha, CULL_MODE_BACK }, get);
-    st->accessors[0][1].Get({ PBR_Renderer::RenderPassType::Main, (base | PBR_Renderer::PSO_FLAG_USE_JOINTS) & st->enabledFlags, PBR_Renderer::ALPHA_MODE_BLEND, CULL_MODE_BACK }, get);
+            solid.Get({ PBR_Renderer::RenderPassType::Main, flags & st->enabledFlags, alpha, CULL_MODE_BACK }, get);
+    solid.Get({ PBR_Renderer::RenderPassType::Main, (base | PBR_Renderer::PSO_FLAG_USE_JOINTS) & st->enabledFlags, PBR_Renderer::ALPHA_MODE_BLEND, CULL_MODE_BACK }, get);
     return st;
 }
 
@@ -387,7 +405,7 @@ void PbrDraw(DiligentSceneRenderer::Impl& r, const GpuMesh& mesh, const glm::mat
     const PBR_Renderer::PSO_FLAGS  flags = FlagsFor(m) & st.enabledFlags;
     const PBR_Renderer::ALPHA_MODE alpha = AlphaFor(m);
     const PBR_Renderer::PSOKey     key{ PBR_Renderer::RenderPassType::Main, flags, alpha, m.cullBack ? CULL_MODE_BACK : CULL_MODE_NONE };
-    const auto& accessor = st.accessors[m.wireframe ? 1 : 0][m.depthWrite ? 1 : 0];
+    const auto& accessor = AccessorFor(r, st, DepthState{ m.wireframe, m.depthWrite, m.depthTest, m.depthBias });
     IPipelineState* pso = accessor ? accessor.Get(key, PBR_Renderer::PsoCacheAccessor::GET_FLAG_CREATE_IF_NULL |
                                                            PBR_Renderer::PsoCacheAccessor::GET_FLAG_ASYNC_COMPILE)
                                    : nullptr;
@@ -481,7 +499,7 @@ void PbrDraw(DiligentSceneRenderer::Impl& r, const GpuMesh& mesh, const glm::mat
     r.context->SetVertexBuffers(0, kNumVertexSlots, vbs, offsets, RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
                                 SET_VERTEX_BUFFERS_FLAG_RESET);
     r.context->SetIndexBuffer(mesh.indices, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-    DrawIndexedAttribs draw{ mesh.indexCount, VT_UINT16, DRAW_FLAG_VERIFY_ALL };
+    DrawIndexedAttribs draw{ mesh.indexCount, mesh.index32 ? VT_UINT32 : VT_UINT16, DRAW_FLAG_VERIFY_ALL };
     r.context->DrawIndexed(draw);
     ++r.stats.draws;
 }

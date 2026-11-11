@@ -20,6 +20,7 @@
 //                        blendWritesDepth; Additive is approximated by BLEND
 //   xray                 BLEND at alpha 0.35, no depth write, no culling
 //   wireframe            the wireframe pipeline, when the device supports it
+//   depthTest / depthBias  the depth function (ALWAYS when off) / the bias steps
 #include <render/Render.h>
 
 #include <glm/glm.hpp>
@@ -42,6 +43,8 @@ struct MappedMaterial {
     enum class SpecSource { None, NormalAlpha, Rmaos, External };
 
     Alpha      alpha      = Alpha::Opaque;
+    bool       depthTest  = true;
+    int        depthBias  = 0;
     bool       cullBack   = true;
     bool       depthWrite = true;
     bool       wireframe  = false;

@@ -287,6 +287,8 @@ void DiligentSceneRenderer::BeginFrame(int width, int height) {
     r.stats   = {};
     r.inFrame = true;
     r.gridRequested = false;
+    r.queue.clear();   // a frame that never ended
+    r.queuedBones.clear();
     OverlayBeginFrame(r);
 
     r.BindSceneTargets();
@@ -315,6 +317,7 @@ void DiligentSceneRenderer::SetLight(const glm::vec3& dir, const glm::vec3& colo
 void DiligentSceneRenderer::EndFrame() {
     Impl& r = *m_impl;
     if (!r.inFrame) return;
+    r.FlushQueue();
     if (ITextureView* out = r.OutputRTV()) {
         r.RunPost(out);
         if (r.gridRequested) r.RunGrid(out);
@@ -343,14 +346,12 @@ void DiligentSceneRenderer::DrawGrid(float cellSize, int halfExtent) {
 // ── Draws ─────────────────────────────────────────────────────────────────────
 
 void DiligentSceneRenderer::DrawMesh(MeshHandle mesh, const glm::mat4& world, const DrawSurface& surface) {
-    if (!m_impl->inFrame) return;
-    if (const GpuMesh* m = m_impl->FindMesh(mesh)) PbrDraw(*m_impl, *m, world, {}, surface);
+    if (m_impl->inFrame) m_impl->Enqueue(mesh, world, {}, surface);
 }
 
 void DiligentSceneRenderer::DrawSkinnedMesh(MeshHandle mesh, const glm::mat4& world,
                                             std::span<const glm::mat4> boneTransforms, const DrawSurface& surface) {
-    if (!m_impl->inFrame) return;
-    if (const GpuMesh* m = m_impl->FindMesh(mesh)) PbrDraw(*m_impl, *m, world, boneTransforms, surface);
+    if (m_impl->inFrame) m_impl->Enqueue(mesh, world, boneTransforms, surface);
 }
 
 void DiligentSceneRenderer::DrawTerrainTile(MeshHandle, const TerrainSurface&) {

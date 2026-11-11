@@ -6,6 +6,7 @@
 //   Textures.cpp       texture loading, blend maps, views, readback
 //   PbrPass.cpp        DiligentFX PBR_Renderer: IBL, PSO caches, SRBs, mesh draws
 //   FaceTintPass.cpp   the face-tint composite
+//   Queue.cpp          the frame's mesh draws, sorted and drawn at EndFrame
 #include "Internal.h"
 
 #include "Buffer.h"
@@ -30,9 +31,24 @@ using Diligent::RefCntAutoPtr;
 struct GpuMesh {
     // One buffer per attribute (PBR input slots 0..5); null = absent.
     RefCntAutoPtr<Diligent::IBuffer> positions, normals, uvs, joints, weights, colors;
-    RefCntAutoPtr<Diligent::IBuffer> indices;   // u16
+    RefCntAutoPtr<Diligent::IBuffer> indices;   // u16, or u32 when index32
     std::uint32_t vertexCount = 0;
     std::uint32_t indexCount  = 0;
+    bool          index32     = false;
+    glm::vec3     boundsCentre{ 0.f };   // model space, the centre of the positions' box (blend sorting)
+};
+
+// One queued mesh draw (DrawMesh / DrawSkinnedMesh), drawn at EndFrame (Queue.cpp).
+struct QueuedDraw {
+    std::uint32_t mesh = 0;          // looked up again at the flush: a mesh freed mid-frame is skipped
+    glm::mat4     world{ 1.f };
+    std::uint32_t boneOffset = 0;    // into Impl::queuedBones
+    std::uint32_t boneCount  = 0;
+    DrawSurface   surface;
+    int           bucket = 0;        // 0 opaque, 1 alpha-tested, 2 blended
+    glm::vec3     centre{ 0.f };     // world space, the mesh bounds' centre
+    float         depth  = 0.f;      // view-space distance along the camera's forward axis (set at the flush)
+    std::uint32_t order  = 0;        // submission order
 };
 
 struct GpuTexture {
@@ -125,6 +141,12 @@ struct DiligentSceneRenderer::Impl {
     PbrPtr      pbr{ nullptr, &DestroyPbrState };
     FaceTintPtr tint{ nullptr, &DestroyFaceTintState };
     OverlayPtr  overlay{ nullptr, &DestroyOverlayState };
+
+    // ── Draw queue (Queue.cpp) ──
+    std::vector<QueuedDraw> queue;
+    std::vector<glm::mat4>  queuedBones;
+    void Enqueue(MeshHandle mesh, const glm::mat4& world, std::span<const glm::mat4> bones, const DrawSurface& surface);
+    void FlushQueue();   // sorts and draws the queue into the scene targets, then empties it
 
     FrameStats stats, lastStats;
 

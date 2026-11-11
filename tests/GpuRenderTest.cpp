@@ -408,6 +408,112 @@ void TestPbr(RenderDevice& dev) {
 }
 
 
+// ── 5b. The draw queue: sorting, depth state, vertex alpha, 32-bit indices ─────
+void TestDrawQueue(RenderDevice& dev) {
+    std::printf("-- draw queue --\n");
+    PbrScene s(dev);
+    const Rgba bg = Background();
+    const glm::vec3 centre(0.f);
+
+    const MeshHandle farQ  = s.r.UploadMesh(MakeQuad(0.f));
+    const MeshHandle nearQ = s.r.UploadMesh(MakeQuad(0.5f));
+    DrawSurface red, green;
+    red.tint   = { 1.f, 0.05f, 0.05f, 0.6f };
+    green.tint = { 0.05f, 1.f, 0.05f, 0.6f };
+    red.blendMode = green.blendMode = DrawSurface::BlendMode::AlphaBlend;
+
+    // Blended draws go back to front whatever the submission order: the near (red) one ends on top.
+    auto px = s.Render([&](auto& r) {
+        r.DrawMesh(nearQ, glm::mat4(1.f), red);
+        r.DrawMesh(farQ, glm::mat4(1.f), green);
+    });
+    const Rgba nearFirst = s.At(px, centre);
+    px = s.Render([&](auto& r) {
+        r.DrawMesh(farQ, glm::mat4(1.f), green);
+        r.DrawMesh(nearQ, glm::mat4(1.f), red);
+    });
+    const Rgba farFirst = s.At(px, centre);
+    std::printf("   near submitted first (%d,%d,%d), far first (%d,%d,%d)\n", nearFirst.r, nearFirst.g, nearFirst.b, farFirst.r,
+                farFirst.g, farFirst.b);
+    check("blended draws sort back to front", nearFirst.r > nearFirst.g && !Differs(nearFirst, farFirst, 3));
+
+    // noSort keeps submission order: a noSort far quad after the near one stays after it (on top).
+    DrawSurface greenNoSort = green;
+    greenNoSort.noSort      = true;
+    px = s.Render([&](auto& r) {
+        r.DrawMesh(nearQ, glm::mat4(1.f), red);
+        r.DrawMesh(farQ, glm::mat4(1.f), greenNoSort);
+    });
+    const Rgba noSort = s.At(px, centre);
+    check("a noSort blended draw keeps its place after the draw before it", noSort.g > noSort.r);
+
+    // Opaque goes first even when submitted after a blended surface in front of it.
+    DrawSurface solidGreen;
+    solidGreen.tint = { 0.05f, 1.f, 0.05f, 1.f };
+    px = s.Render([&](auto& r) {
+        r.DrawMesh(nearQ, glm::mat4(1.f), red);
+        r.DrawMesh(farQ, glm::mat4(1.f), solidGreen);
+    });
+    const Rgba mixed = s.At(px, centre);
+    check("opaque draws before blended (the blend lands over it)", mixed.r > 60 && mixed.g > 60);
+
+    // Depth bias: a coplanar decal submitted first still wins over the base.
+    DrawSurface base = solidGreen, decal;
+    decal.tint      = { 1.f, 0.05f, 0.05f, 1.f };
+    decal.depthBias = 1;
+    px = s.Render([&](auto& r) {
+        r.DrawMesh(farQ, glm::mat4(1.f), decal);
+        r.DrawMesh(farQ, glm::mat4(1.f), base);
+    });
+    const Rgba decalPx = s.At(px, centre);
+    check("a biased (decal) surface wins over a coplanar one", decalPx.r > decalPx.g + 30);
+
+    // depthTest off: the far quad draws over the near one.
+    DrawSurface onTop = solidGreen;
+    onTop.depthTest   = false;
+    DrawSurface solidRed;
+    solidRed.tint = { 1.f, 0.05f, 0.05f, 1.f };
+    px = s.Render([&](auto& r) {
+        r.DrawMesh(nearQ, glm::mat4(1.f), solidRed);
+        r.DrawMesh(farQ, glm::mat4(1.f), onTop);
+    });
+    const Rgba untested = s.At(px, centre);
+    check("depthTest off draws over nearer geometry", untested.g > untested.r + 30);
+
+    // Vertex alpha: zero alpha under an alpha test leaves nothing.
+    MeshData clear = MakeQuad();
+    clear.vertexAlpha = std::vector<std::uint8_t>(4, 0);
+    const MeshHandle clearQ = s.r.UploadMesh(clear);
+    DrawSurface tested;
+    tested.blendMode      = DrawSurface::BlendMode::AlphaTest;
+    tested.useVertexColor = true;
+    px = s.Render([&](auto& r) { r.DrawMesh(clearQ, glm::mat4(1.f), tested); });
+    check("vertex alpha 0 is cut by the alpha test", !Differs(s.At(px, centre), bg));
+    tested.useVertexColor = false;
+    px = s.Render([&](auto& r) { r.DrawMesh(clearQ, glm::mat4(1.f), tested); });
+    check("vertex alpha is ignored without useVertexColor", Differs(s.At(px, centre), bg));
+
+    // 32-bit indices.
+    MeshData wide = MakeQuad();
+    wide.indices32.assign(wide.indices.begin(), wide.indices.end());
+    wide.indices.clear();
+    const MeshHandle wideQ = s.r.UploadMesh(wide);
+    check("a mesh with 32-bit indices uploads", wideQ != MeshHandle::Invalid);
+    px = s.Render([&](auto& r) { r.DrawMesh(wideQ, glm::mat4(1.f)); });
+    check("a mesh with 32-bit indices draws", Differs(s.At(px, centre), bg));
+
+    // A mesh freed between draw and EndFrame is skipped, not drawn from a stale handle.
+    const MeshHandle doomed = s.r.UploadMesh(MakeQuad());
+    s.r.BeginFrame(PbrScene::W, PbrScene::H);
+    s.r.SetCamera(s.view, s.proj);
+    s.r.DrawMesh(doomed, glm::mat4(1.f));
+    s.r.FreeMesh(doomed);
+    s.r.EndFrame();
+    dev.FinishFrame();
+    check("a mesh freed mid-frame is skipped", s.r.LastFrameStats().draws == 0);
+}
+
+
 // ── 6. Normal maps ────────────────────────────────────────────────────────────
 // The quad's U runs along +X, so a normal map tilted to +U (red) must face the
 // surface towards +X: lit from +X it is brighter than lit from -X.
@@ -1155,6 +1261,7 @@ int main(int argc, char** argv) {
     TestGridAxes(*dev);
     TestResources(*dev);
     TestPbr(*dev);
+    TestDrawQueue(*dev);
     TestNormalMap(*dev);
     TestFaceTint(*dev);
     TestSkinTint(*dev);
