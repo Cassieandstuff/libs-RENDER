@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -133,11 +134,17 @@ struct LightingState {
     RefCntAutoPtr<ITexture> white, flatNormal;
     bool frameDirty = true;
     bool warnedJoints = false;
+    std::set<std::string> warnedSlots;   // slots that were handed the wrong dimension of texture
 };
 
 void DestroyLightingState(LightingState* p) { delete p; }
 
 namespace {
+
+void WarnOnce(LightingState& st, const char* slot) {
+    if (!st.warnedSlots.insert(slot).second) return;
+    std::fprintf(stderr, "[render] DrawSurface %s is a texture of the wrong dimension (cube vs 2D); drawn without it\n", slot);
+}
 
 RefCntAutoPtr<IBuffer> MakeCB(IRenderDevice* device, const char* name, Uint32 size) {
     BufferDesc d;
@@ -334,7 +341,26 @@ void LightingDraw(DiligentSceneRenderer::Impl& r, const GpuMesh& mesh, const glm
     GpuTexture* lightMap  = r.FindTexture(L.lightingMap);
     GpuTexture* backMap   = r.FindTexture(L.backLightMap);
     GpuTexture* height    = r.FindTexture(L.heightMap);
-    if (env && !env->cube) env = nullptr;
+    // A slot takes only its own kind of texture (a cube map for the environment, 2D for the rest); anything else is
+    // treated as missing rather than bound where the shader reads another dimension.
+    auto flat2d = [&](GpuTexture*& t, const char* slot) {
+        if (t && t->cube) {
+            WarnOnce(*st, slot);
+            t = nullptr;
+        }
+    };
+    flat2d(diffuse, "diffuse");
+    flat2d(normal, "normalMap");
+    flat2d(specular, "specularMap");
+    flat2d(glow, "glowMap");
+    flat2d(envMask, "lighting.envMask");
+    flat2d(lightMap, "lighting.lightingMap");
+    flat2d(backMap, "lighting.backLightMap");
+    flat2d(height, "lighting.heightMap");
+    if (env && !env->cube) {
+        WarnOnce(*st, "lighting.envMap");
+        env = nullptr;
+    }
 
     using Blend = DrawSurface::BlendMode;
     const bool skinned = !bones.empty() && mesh.joints && mesh.weights;

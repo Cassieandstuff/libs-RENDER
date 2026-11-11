@@ -2,6 +2,7 @@
 
 #include "EngineFactoryD3D12.h"
 #include "EngineFactoryVk.h"
+#include "PlatformDebug.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -44,6 +45,9 @@ void DILIGENT_CALL_TYPE OnDiligentMessage(DEBUG_MESSAGE_SEVERITY severity, const
 }
 
 void RequestFeatures(EngineCreateInfo& ci, const DeviceOptions& opts) {
+    // A failed Diligent assertion is logged (OnDiligentMessage); only on request does it also stop the process with a modal
+    // dialog, which would block a scripted or test run on the user's desktop.
+    PlatformDebug::SetBreakOnError(opts.assertDialogs);
     ci.SetValidationLevel(opts.validation ? VALIDATION_LEVEL_1 : VALIDATION_LEVEL_DISABLED);
     ci.Features.WireframeFill           = DEVICE_FEATURE_STATE_OPTIONAL;
     ci.Features.TextureComponentSwizzle = DEVICE_FEATURE_STATE_OPTIONAL;

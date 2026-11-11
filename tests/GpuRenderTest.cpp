@@ -187,6 +187,17 @@ std::vector<std::uint8_t> MakeDds4x4(std::uint8_t b, std::uint8_t g, std::uint8_
     return bytes;
 }
 
+// A 4×4 BGRA8 cube map, every face one colour.
+std::vector<std::uint8_t> MakeCubeDds4x4(std::uint8_t b, std::uint8_t g, std::uint8_t r, std::uint8_t a) {
+    std::vector<std::uint8_t> bytes = MakeDds4x4(b, g, r, a);
+    std::uint32_t caps = 0x1000 | 0x8, caps2 = 0x200 | 0xFC00;   // TEXTURE | COMPLEX; CUBEMAP | all six faces
+    std::memcpy(bytes.data() + 27 * 4, &caps, 4);
+    std::memcpy(bytes.data() + 28 * 4, &caps2, 4);
+    for (int face = 1; face < 6; ++face)
+        for (int i = 0; i < 16; ++i) bytes.insert(bytes.end(), { b, g, r, a });
+    return bytes;
+}
+
 void TestResources(RenderDevice& dev) {
     std::printf("-- resources --\n");
     DiligentSceneRenderer r(dev);
@@ -643,6 +654,31 @@ void TestLightingModel(RenderDevice& dev) {
     faint.alphaTestFunc = CompareFunc::Less;
     px = render(plain, [&](auto& r) { r.DrawMesh(quad, glm::mat4(1.f), faint); });
     check("alpha test LESS keeps it, and the surface stays opaque", Near(s.At(px, centre).r, 179, 3));
+
+    // Environment maps: a mid-grey cube adds 0.5 where the mask lets it (sun 0.2 → 0.2 + 0.5 = 0.7 → 179).
+    const TextureHandle cube      = s.r.LoadTextureFromMemory(MakeCubeDds4x4(128, 128, 128, 255), TexColorSpace::Srgb);
+    const TextureHandle maskOn    = s.r.LoadTextureFromMemory(MakeDds4x4(255, 255, 255, 255), TexColorSpace::Linear);
+    const TextureHandle maskOff   = s.r.LoadTextureFromMemory(MakeDds4x4(0, 0, 0, 255), TexColorSpace::Linear);
+    check("a cube map loads", cube != TextureHandle::Invalid);
+    const SceneEnvironment dimSun = envWith({ 0, 0, 1 }, glm::vec3(0.2f), glm::vec3(0.f));
+    DrawSurface shinyEnv = lit;
+    shinyEnv.lighting.envMap = cube;
+    auto envAt = [&](TextureHandle mask) {
+        shinyEnv.lighting.envMask = mask;
+        auto shot = render(dimSun, [&](auto& r) { r.DrawMesh(quad, glm::mat4(1.f), shinyEnv); });
+        return s.At(shot, centre).r;
+    };
+    const int unmasked = envAt(TextureHandle::Invalid), masked = envAt(maskOn), blocked = envAt(maskOff);
+    std::printf("   env map: no mask %d, white mask %d, black mask %d\n", unmasked, masked, blocked);
+    check("an env map with no mask reflects everywhere (0.7 -> 179)", Near(unmasked, 179, 4));
+    check("a white env mask lets it through", Near(masked, 179, 4));
+    check("a black env mask blocks it (0.2 -> 51)", Near(blocked, 51, 4));
+    const int wrongKind = envAt(cube);   // a cube in a 2D slot: dropped (with a warning), not bound
+    check("a cube map handed to a 2D slot is left out, not bound", Near(wrongKind, 179, 4));
+    shinyEnv.lighting.envMap  = maskOn;   // a 2D texture as the environment: left out too
+    shinyEnv.lighting.envMask = TextureHandle::Invalid;
+    px = render(dimSun, [&](auto& r) { r.DrawMesh(quad, glm::mat4(1.f), shinyEnv); });
+    check("a 2D texture handed to the env-map slot is left out", Near(s.At(px, centre).r, 51, 4));
 
     // A tangent-space normal tilted towards +U faces +X, through the mesh's own tangents as through the derived frame.
     DrawSurface bumpy = lit;
