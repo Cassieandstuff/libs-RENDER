@@ -31,13 +31,14 @@ const GpuMesh* DiligentSceneRenderer::Impl::FindMesh(MeshHandle h) const {
     return it == meshes.end() ? nullptr : &it->second;
 }
 
-MeshHandle DiligentSceneRenderer::UploadMesh(const MeshData& data) {
-    Impl& r = *m_impl;
+namespace {
+
+// The GPU half of `data` (UploadMesh's rules); false when it would not upload.
+bool BuildGpuMesh(DiligentSceneRenderer::Impl& r, const MeshData& data, GpuMesh& m) {
     const std::size_t n = data.positions.size();
     const bool index32 = data.indices.empty();
-    if (n == 0 || (index32 && data.indices32.empty()) || (!index32 && n > 0x10000)) return MeshHandle::Invalid;
+    if (n == 0 || (index32 && data.indices32.empty()) || (!index32 && n > 0x10000)) return false;
 
-    GpuMesh m;
     m.vertexCount = static_cast<std::uint32_t>(n);
     m.indexCount  = static_cast<std::uint32_t>(index32 ? data.indices32.size() : data.indices.size());
     m.index32     = index32;
@@ -76,6 +77,8 @@ MeshHandle DiligentSceneRenderer::UploadMesh(const MeshData& data) {
         m.colors = CreateVertexBuffer(r.device, "render mesh colors", colors);
     }
 
+    if (data.tangents.size() == n) m.tangents = CreateVertexBuffer(r.device, "render mesh tangents", data.tangents);
+
     BufferDesc ib;
     ib.Name      = "render mesh indices";
     ib.Size      = index32 ? data.indices32.size() * sizeof(std::uint32_t) : data.indices.size() * sizeof(std::uint16_t);
@@ -84,11 +87,28 @@ MeshHandle DiligentSceneRenderer::UploadMesh(const MeshData& data) {
     BufferData ibData{ index32 ? static_cast<const void*>(data.indices32.data()) : data.indices.data(), ib.Size };
     r.device->CreateBuffer(ib, &ibData, &m.indices);
 
-    if (!m.positions || !m.normals || !m.uvs || !m.indices) return MeshHandle::Invalid;
+    return m.positions && m.normals && m.uvs && m.indices;
+}
 
+} // namespace
+
+MeshHandle DiligentSceneRenderer::UploadMesh(const MeshData& data) {
+    Impl&   r = *m_impl;
+    GpuMesh m;
+    if (!BuildGpuMesh(r, data, m)) return MeshHandle::Invalid;
     const std::uint32_t id = r.nextMeshId++;
     r.meshes.emplace(id, std::move(m));
     return static_cast<MeshHandle>(id);
+}
+
+bool DiligentSceneRenderer::UpdateMesh(MeshHandle handle, const MeshData& data) {
+    Impl& r  = *m_impl;
+    auto  it = r.meshes.find(static_cast<std::uint32_t>(handle));
+    if (it == r.meshes.end()) return false;
+    GpuMesh m;
+    if (!BuildGpuMesh(r, data, m)) return false;
+    it->second = std::move(m);   // in-flight GPU work keeps the old buffers alive (Diligent defers the release)
+    return true;
 }
 
 void DiligentSceneRenderer::FreeMesh(MeshHandle handle) {

@@ -31,6 +31,7 @@ using Diligent::RefCntAutoPtr;
 struct GpuMesh {
     // One buffer per attribute (PBR input slots 0..5); null = absent.
     RefCntAutoPtr<Diligent::IBuffer> positions, normals, uvs, joints, weights, colors;
+    RefCntAutoPtr<Diligent::IBuffer> tangents;   // float4 (xyz tangent, w handedness); null = absent (Lighting pass)
     RefCntAutoPtr<Diligent::IBuffer> indices;   // u16, or u32 when index32
     std::uint32_t vertexCount = 0;
     std::uint32_t indexCount  = 0;

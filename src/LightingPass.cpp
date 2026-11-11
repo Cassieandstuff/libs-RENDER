@@ -46,11 +46,12 @@ enum Feature : std::uint32_t {
     kBackLightMap     = 1u << 15,
     kParallax         = 1u << 16,
     kAlphaTest        = 1u << 17,
+    kVertexTangents   = 1u << 18,
 };
 constexpr const char* kFeatureMacros[] = {
     "SKINNED", "VERTEX_COLORS", "NORMAL_MAP", "MODEL_SPACE_NORMALS", "SPEC_NORMAL_ALPHA", "SPEC_MAP",
     "GLOW_MAP", "OWN_EMIT", "ENV_MAP", "ENV_MASK", "ENV_MASK_NORMAL_ALPHA", "RIM_LIGHT", "SOFT_LIGHT",
-    "LIGHTING_MAP", "BACK_LIGHT", "BACK_LIGHT_MAP", "PARALLAX", "ALPHA_TEST",
+    "LIGHTING_MAP", "BACK_LIGHT", "BACK_LIGHT_MAP", "PARALLAX", "ALPHA_TEST", "VERTEX_TANGENTS",
 };
 constexpr int kNumFeatures = static_cast<int>(std::size(kFeatureMacros));
 
@@ -209,6 +210,7 @@ LightingState::Variant& VariantFor(DiligentSceneRenderer::Impl& r, LightingState
         layout.push_back({ 4, 5, 4, VT_FLOAT32, False });
     }
     if (features & kVertexColors) layout.push_back({ 5, 6, 4, VT_UINT8, True });
+    if (features & kVertexTangents) layout.push_back({ 6, 3, 4, VT_FLOAT32, False });
 
     GraphicsPipelineStateCreateInfo ci;
     ci.PSODesc.Name = "render lighting PSO";
@@ -361,6 +363,7 @@ void LightingDraw(DiligentSceneRenderer::Impl& r, const GpuMesh& mesh, const glm
         if (backMap) f |= kBackLightMap;
     }
     if (height) f |= kParallax;
+    if (mesh.tangents && (f & (kNormalMap | kParallax))) f |= kVertexTangents;
     if (tested) f |= kAlphaTest;
 
     FixedState fixed;
@@ -421,7 +424,8 @@ void LightingDraw(DiligentSceneRenderer::Impl& r, const GpuMesh& mesh, const glm
         var.textures[i]->Set(view);
     }
 
-    IBuffer* vbs[7] = { mesh.positions, mesh.normals, mesh.uvs, nullptr, (f & kSkinned) ? mesh.joints.RawPtr() : nullptr,
+    IBuffer* vbs[7] = { mesh.positions, mesh.normals, mesh.uvs, (f & kVertexTangents) ? mesh.tangents.RawPtr() : nullptr,
+                        (f & kSkinned) ? mesh.joints.RawPtr() : nullptr,
                         (f & kSkinned) ? mesh.weights.RawPtr() : nullptr, (f & kVertexColors) ? mesh.colors.RawPtr() : nullptr };
     const Uint64 offsets[7] = {};
     r.context->SetPipelineState(var.pso);

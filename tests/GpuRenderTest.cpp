@@ -643,6 +643,41 @@ void TestLightingModel(RenderDevice& dev) {
     faint.alphaTestFunc = CompareFunc::Less;
     px = render(plain, [&](auto& r) { r.DrawMesh(quad, glm::mat4(1.f), faint); });
     check("alpha test LESS keeps it, and the surface stays opaque", Near(s.At(px, centre).r, 179, 3));
+
+    // A tangent-space normal tilted towards +U faces +X, through the mesh's own tangents as through the derived frame.
+    DrawSurface bumpy = lit;
+    bumpy.normalMap   = s.r.LoadTextureFromMemory(MakeDds4x4(204, 128, 230, 255), TexColorSpace::Linear);
+    MeshData withTangents = MakeQuad();
+    withTangents.tangents = std::vector<glm::vec4>(4, { 1.f, 0.f, 0.f, 1.f });
+    const MeshHandle tangentQuad = s.r.UploadMesh(withTangents);
+    for (const MeshHandle m : { quad, tangentQuad }) {
+        px = render(envWith({ 1, 0, 0.3f }, glm::vec3(0.5f), glm::vec3(0.f)), [&](auto& r) { r.DrawMesh(m, glm::mat4(1.f), bumpy); });
+        const int fromPlusX = s.At(px, centre).r;
+        px = render(envWith({ -1, 0, 0.3f }, glm::vec3(0.5f), glm::vec3(0.f)), [&](auto& r) { r.DrawMesh(m, glm::mat4(1.f), bumpy); });
+        const int fromMinusX = s.At(px, centre).r;
+        std::printf("   +U tilt (%s): lit from +X %d, from -X %d\n", m == quad ? "derived frame" : "mesh tangents", fromPlusX, fromMinusX);
+        check(m == quad ? "a +U normal tilt faces +X (derived frame)" : "a +U normal tilt faces +X (mesh tangents)",
+              fromPlusX > fromMinusX + 30);
+    }
+}
+
+// ── 5c'. UpdateMesh: new contents, even a new vertex count, under the same handle ─
+void TestUpdateMesh(RenderDevice& dev) {
+    std::printf("-- UpdateMesh --\n");
+    PbrScene s(dev);
+    const Rgba bg = Background();
+    const MeshHandle m = s.r.UploadMesh(MakeQuad());
+    MeshData tri;
+    tri.positions = { { 0.4f, -0.5f, 0.f }, { 1.4f, -0.5f, 0.f }, { 0.9f, 0.5f, 0.f } };
+    tri.indices   = { 0, 1, 2 };
+    check("UpdateMesh accepts new contents with another vertex count", s.r.UpdateMesh(m, tri));
+    auto px = s.Render([&](auto& r) { r.DrawMesh(m, glm::mat4(1.f)); });
+    check("the old contents are gone", !Differs(s.At(px, { -0.6f, 0.f, 0.f }), bg));
+    check("the new contents draw under the same handle", Differs(s.At(px, { 0.9f, -0.2f, 0.f }), bg));
+    check("UpdateMesh refuses an unknown handle", !s.r.UpdateMesh(static_cast<MeshHandle>(999999), tri));
+    check("UpdateMesh refuses contents that would not upload", !s.r.UpdateMesh(m, MeshData{}));
+    px = s.Render([&](auto& r) { r.DrawMesh(m, glm::mat4(1.f)); });
+    check("a refused update keeps the contents", Differs(s.At(px, { 0.9f, -0.2f, 0.f }), bg));
 }
 
 
@@ -1435,6 +1470,7 @@ int main(int argc, char** argv) {
     TestPbr(*dev);
     TestDrawQueue(*dev);
     TestLightingModel(*dev);
+    TestUpdateMesh(*dev);
     TestFrameOrder(*dev);
     TestNormalMap(*dev);
     TestFaceTint(*dev);

@@ -10,7 +10,8 @@
 //
 //   SKINNED                 bone palette (LightingBones), joints / weights streams
 //   VERTEX_COLORS           the colour stream multiplies diffuse (rgb) and alpha
-//   NORMAL_MAP              g_Normal, tangent space (cotangent frame from derivatives)
+//   NORMAL_MAP              g_Normal, tangent space: the mesh's tangents with VERTEX_TANGENTS,
+//                           else a cotangent frame from the UVs' screen derivatives
 //   MODEL_SPACE_NORMALS     g_Normal holds model-space normals instead
 //   SPEC_NORMAL_ALPHA       the specular mask is g_Normal's alpha
 //   SPEC_MAP                the specular mask is g_Specular's red
@@ -67,6 +68,9 @@ struct VSIn {
 #if VERTEX_COLORS
     float4 color   : ATTRIB5;
 #endif
+#if VERTEX_TANGENTS
+    float4 tangent : ATTRIB6;
+#endif
 };
 struct PSIn {
     float4 pos   : SV_POSITION;
@@ -78,6 +82,9 @@ struct PSIn {
     float3 m0    : MODEL_ROW0;
     float3 m1    : MODEL_ROW1;
     float3 m2    : MODEL_ROW2;
+#endif
+#if VERTEX_TANGENTS
+    float4 tangent : TANGENT;
 #endif
 };
 void main(in VSIn i, out PSIn o) {
@@ -102,6 +109,9 @@ void main(in VSIn i, out PSIn o) {
     o.m0 = m3[0];
     o.m1 = m3[1];
     o.m2 = m3[2];
+#endif
+#if VERTEX_TANGENTS
+    o.tangent = float4(mul(m3, i.tangent.xyz), i.tangent.w);
 #endif
 }
 )";
@@ -143,6 +153,9 @@ struct PSIn {
     float3 m0    : MODEL_ROW0;
     float3 m1    : MODEL_ROW1;
     float3 m2    : MODEL_ROW2;
+#endif
+#if VERTEX_TANGENTS
+    float4 tangent : TANGENT;
 #endif
 };
 
@@ -217,6 +230,10 @@ float4 main(in PSIn i, bool front : SV_IsFrontFace) : SV_Target {
     float  invmax = rsqrt(max(max(dot(T, T), dot(B, B)), 1e-20));
     T *= invmax;
     B *= invmax;
+#if VERTEX_TANGENTS
+    T = normalize(i.tangent.xyz - gn * dot(gn, i.tangent.xyz));   // the mesh's own frame, kept square to the normal
+    B = cross(gn, T) * (i.tangent.w < 0.0 ? -1.0 : 1.0) * (front ? 1.0 : -1.0);
+#endif
 
 #if PARALLAX
     float  height = g_Height.Sample(g_Height_sampler, uv).r;

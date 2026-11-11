@@ -46,8 +46,9 @@ enum class TextureHandle : uint32_t { Invalid = 0 };
 
 // ── Mesh upload descriptor ─────────────────────────────────────────────────────
 // boneIndices / boneWeights are optional (leave empty for static meshes).
-// tangents are optional (xyz = tangent direction, w = handedness ±1); required
-// for normal-map shading.  indices (or indices32) are required; positions/normals/uvs must be
+// tangents are optional (xyz = tangent direction along +U, w = handedness ±1:
+// the bitangent w·cross(normal, tangent) runs along +V); without them a renderer
+// derives the frame from the UVs.  indices (or indices32) are required; positions/normals/uvs must be
 // the same length.
 struct MeshData {
     std::vector<glm::vec3>   positions;
@@ -397,6 +398,11 @@ struct ISceneRenderer {
     // ── GPU resource management ───────────────────────────────────────────────
     virtual MeshHandle    UploadMesh  (const MeshData& data)                  = 0;
     virtual void          FreeMesh   (MeshHandle handle)                      = 0;
+    // Replace an uploaded mesh's contents under the same handle: any attribute, the
+    // indices, the vertex count. False when the handle is unknown or `data` would
+    // not upload (UploadMesh's rules); the old contents then stay. Draws queued
+    // this frame draw the new contents. Optional, with a default that refuses.
+    virtual bool          UpdateMesh (MeshHandle handle, const MeshData& data) { (void)handle; (void)data; return false; }
     // Upload a 33×33 single-channel float blend map as an R32F texture.
     // Used for terrain VTXT alpha layers; returns TextureHandle::Invalid on failure.
     virtual TextureHandle UploadBlendMap(const float* data33x33)              = 0;

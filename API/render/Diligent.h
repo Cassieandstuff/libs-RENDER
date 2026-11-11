@@ -251,6 +251,7 @@ public:
 
     MeshHandle    UploadMesh(const MeshData& data) override;
     void          FreeMesh(MeshHandle handle) override;
+    bool          UpdateMesh(MeshHandle handle, const MeshData& data) override;
     TextureHandle UploadBlendMap(const float* data33x33) override;
     void          UpdateMeshPositions(MeshHandle handle, std::span<const glm::vec3> positions) override;
     void          UpdateMeshNormals(MeshHandle handle, std::span<const glm::vec3> normals) override;
