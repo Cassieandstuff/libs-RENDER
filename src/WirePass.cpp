@@ -23,7 +23,8 @@ using namespace Diligent;
 namespace {
 
 constexpr Uint32 kMaxJoints = 256;
-constexpr TEXTURE_FORMAT kMaskFormat = TEX_FORMAT_RGBA8_UNORM;
+// sRGB storage: the mask holds linear colour, and 8 bits encoded keep dark display values exact.
+constexpr TEXTURE_FORMAT kMaskFormat = TEX_FORMAT_RGBA8_UNORM_SRGB;
 
 constexpr const char* kFlatVS = R"(
 cbuffer FlatDraw {
@@ -79,6 +80,9 @@ float4 main(in PSIn i) : SV_Target {
             if (c.a > best.a) best = c;
         }
     if (best.a <= 0.0) discard;
+#if OUTPUT_GAMMA
+    best.rgb = pow(best.rgb, 1.0 / 2.2);   // a non-sRGB output takes display values
+#endif
     return best;
 }
 )";
@@ -192,8 +196,10 @@ WireState::Variant& EdgeVariant(DiligentSceneRenderer::Impl& r, WireState& st, T
     auto [it, inserted] = st.edges.try_emplace(static_cast<int>(format));
     WireState::Variant& v = it->second;
     if (!inserted) return v;
+    const bool        srgbOut  = GetTextureFormatAttribs(format).ComponentType == COMPONENT_TYPE_UNORM_SRGB;
+    const ShaderMacro macros[] = { { "OUTPUT_GAMMA", srgbOut ? "0" : "1" } };
     auto vs = r.CompileShader("render fullscreen VS", SHADER_TYPE_VERTEX, shaders::kFullscreenVS);
-    auto ps = r.CompileShader("render outline PS", SHADER_TYPE_PIXEL, kOutlinePS);
+    auto ps = r.CompileShader("render outline PS", SHADER_TYPE_PIXEL, kOutlinePS, macros, 1);
     if (!vs || !ps) return v;
     GraphicsPipelineStateCreateInfo ci;
     ci.PSODesc.Name = "render outline PSO";
@@ -290,9 +296,9 @@ void WireRun(DiligentSceneRenderer::Impl& r, ITextureView* outputRTV) {
                 r.context->SetRenderTargets(1, &maskRTV, dsv, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
                 r.context->SetViewports(1, nullptr, 0, 0);
                 r.context->ClearRenderTarget(maskRTV, clear, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-                // The mask holds the output's encoding already, so the edge pass copies it straight.
+                // Linear colour into the sRGB mask; the edge pass reads it back linear and encodes for the output.
                 DrawFlat(r, *st, kMaskFormat, false, r.outlineDraws, r.outlineBones,
-                         [&](const DrawSurface& s) { return Encode(s.outlineColor, srgbOut); });
+                         [&](const DrawSurface& s) { return Encode(s.outlineColor, true); });
                 {
                     MapHelper<int> c(r.context, st->outlineCB, MAP_WRITE, MAP_FLAG_DISCARD);
                     c[0] = std::clamp(r.style.outlineWidth, 1, 8);
