@@ -1476,6 +1476,7 @@ int LoadDdsFolder(RenderDevice& dev, const std::string& dir) {
 int main(int argc, char** argv) {
     DeviceOptions opts;
     opts.allowFallback = false;   // test exactly the backend asked for
+    opts.assertDialogs = false;   // a failed assertion is logged and counted, never a dialog on the desktop
     std::string ddsFolder;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--load-dds") == 0 && i + 1 < argc) {

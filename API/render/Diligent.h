@@ -48,9 +48,9 @@ struct DeviceOptions {
     // Threads compiling shaders in the background. 0 = a quarter of the hardware
     // threads, 1 to 4 (ShaderCompileThreads), so a burst of pipelines never takes the machine.
     int     shaderCompileThreads = 0;
-    // Diligent's debug builds can stop on a failed assertion with a modal Abort / Retry / Ignore dialog. Off by default:
-    // the assertion is logged as an error and the run goes on.
-    bool    assertDialogs = false;
+    // Diligent's debug builds stop on a failed assertion with a modal Abort / Retry / Ignore dialog (true, Diligent's own
+    // behaviour). A scripted or test run passes false: the assertion is logged as an error and the run goes on.
+    bool    assertDialogs = true;
 };
 
 // The background shader-compile thread count `opts` asks for (see DeviceOptions).
