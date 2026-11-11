@@ -67,6 +67,8 @@ TextureHandle DiligentSceneRenderer::Impl::RegisterTexture(GpuTexture tex) {
     tex.width  = static_cast<int>(desc.Width);
     tex.height = static_cast<int>(desc.Height);
     tex.srgb   = GetTextureFormatAttribs(desc.Format).ComponentType == COMPONENT_TYPE_UNORM_SRGB;
+    tex.cube   = desc.Type == RESOURCE_DIM_TEX_CUBE;
+    tex.srv    = tex.texture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
     if (!tex.arraySrv) tex.arraySrv = CreateArrayView(tex.texture);
     if (!tex.arraySrv) return TextureHandle::Invalid;
     const std::uint32_t id = nextTextureId++;   // never reused

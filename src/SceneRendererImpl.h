@@ -56,19 +56,24 @@ struct GpuTexture {
     RefCntAutoPtr<Diligent::ITextureView> arraySrv;     // TEX_2D_ARRAY view (what PBR shaders sample)
     RefCntAutoPtr<Diligent::ITextureView> rmaosSrv;     // swizzled RMAOS view, created on first use
     RefCntAutoPtr<Diligent::ITextureView> specSrv;      // red-to-alpha view of a specular mask, on first use
+    RefCntAutoPtr<Diligent::ITextureView> srv;          // the plain view: TEX_2D, or TEX_CUBE for a cube map (Lighting pass)
     int  width = 0, height = 0;
     bool srgb = false;
+    bool cube = false;       // a cube map (6 faces)
     bool rendered = false;   // produced on the GPU (face tint) — readable via DebugReadbackRGBA8
 };
 
 struct PbrState;       // PbrPass.cpp
+struct LightingState;  // LightingPass.cpp
 struct FaceTintState;  // FaceTintPass.cpp
 struct OverlayState;   // Overlay.cpp
 void DestroyPbrState(PbrState* p);
+void DestroyLightingState(LightingState* p);
 void DestroyFaceTintState(FaceTintState* t);
 void DestroyOverlayState(OverlayState* o);
 // Owning pointers to the pass states, deleted in their own files.
 using PbrPtr      = std::unique_ptr<PbrState, decltype(&DestroyPbrState)>;
+using LightingPtr = std::unique_ptr<LightingState, decltype(&DestroyLightingState)>;
 using FaceTintPtr = std::unique_ptr<FaceTintState, decltype(&DestroyFaceTintState)>;
 using OverlayPtr  = std::unique_ptr<OverlayState, decltype(&DestroyOverlayState)>;
 
@@ -103,6 +108,7 @@ struct DiligentSceneRenderer::Impl {
     glm::vec3 lightColor{ 1.0f, 0.98f, 0.92f };
     glm::vec3 ambient{ 0.12f, 0.13f, 0.18f };
     std::vector<PointLight> pointLights;
+    SceneEnvironment        environment;   // the Lighting model's light
     float     exposure = 1.f;
     ViewTransform viewTransform = ViewTransform::Filmic;
 
@@ -139,6 +145,7 @@ struct DiligentSceneRenderer::Impl {
 
     // ── Passes ──
     PbrPtr      pbr{ nullptr, &DestroyPbrState };
+    LightingPtr lighting{ nullptr, &DestroyLightingState };
     FaceTintPtr tint{ nullptr, &DestroyFaceTintState };
     OverlayPtr  overlay{ nullptr, &DestroyOverlayState };
 
@@ -157,6 +164,11 @@ struct DiligentSceneRenderer::Impl {
 
 // Pass lifecycles / hooks implemented in their own files.
 PbrPtr CreatePbrState(DiligentSceneRenderer::Impl& r);
+
+LightingPtr CreateLightingState(DiligentSceneRenderer::Impl& r);
+void LightingBeginFrame(DiligentSceneRenderer::Impl& r);   // frame constants (refreshed before the first draw)
+void LightingDraw(DiligentSceneRenderer::Impl& r, const GpuMesh& mesh, const glm::mat4& world,
+                  std::span<const glm::mat4> bones, const DrawSurface& surface);
 void PbrBeginFrame(DiligentSceneRenderer::Impl& r);   // frame constants (lazily refreshed before the first draw)
 void PbrInvalidateTexture(DiligentSceneRenderer::Impl& r, std::uint32_t textureId);
 void PbrDraw(DiligentSceneRenderer::Impl& r, const GpuMesh& mesh, const glm::mat4& world,

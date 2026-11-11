@@ -45,7 +45,13 @@ struct DeviceOptions {
     bool    allowFallback = true;    // try the other backend if the preferred one fails
     bool    validation    = false;   // backend validation layers (Vulkan layers / D3D12 debug layer)
     bool    useWarp       = false;   // D3D12 only: the WARP software adapter (GPU-less test runs)
+    // Threads compiling shaders in the background. 0 = a quarter of the hardware
+    // threads, 1 to 4 (ShaderCompileThreads), so a burst of pipelines never takes the machine.
+    int     shaderCompileThreads = 0;
 };
+
+// The background shader-compile thread count `opts` asks for (see DeviceOptions).
+unsigned ShaderCompileThreads(const DeviceOptions& opts);
 
 // ── RenderDevice ──────────────────────────────────────────────────────────────
 // Owns the engine factory, the render device and the immediate context. One per
@@ -254,6 +260,7 @@ public:
 
     void SetLight(const glm::vec3& dir, const glm::vec3& color, const glm::vec3& ambient) override;
     void SetPointLights(std::span<const PointLight> lights) override;
+    void SetEnvironment(const SceneEnvironment& environment) override;
     // The infinite ground grid (Z = 0), drawn at EndFrame over the tone-mapped image
     // and depth-tested against the scene: minor lines every `cellSize`, fading out
     // `cellSize * halfExtent` from the camera.

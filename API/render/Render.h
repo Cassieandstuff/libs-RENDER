@@ -66,6 +66,60 @@ struct MeshData {
     std::vector<uint32_t>    indices32;
 };
 
+// ── Material models ───────────────────────────────────────────────────────────
+// How a surface is shaded:
+//   Pbr       metal/roughness PBR with image-based ambient (True-PBR meshes, the
+//             editor's own previews). Linear colours; lit by SetLight / SetPointLights.
+//   Lighting  the classic game look: Lambert diffuse, a Blinn-Phong specular lobe
+//             (glossiness = exponent), directional ambient, rim / back / soft
+//             light, environment maps, glow, fog (DrawSurface::lighting). It shades
+//             in display (gamma) space as the game does: every colour it reads —
+//             textures, vertex colours, tint, specular / emissive colours and
+//             SceneEnvironment — is a display value. Lit by SetEnvironment.
+//   Effect    reserved: falls back to Lighting until the effect model lands.
+enum class MaterialModel : std::uint8_t { Pbr, Lighting, Effect };
+
+// Blend factors and alpha-test functions, for the Lighting and Effect models'
+// blended / tested surfaces (Pbr blends premultiplied "over" and tests GREATER).
+enum class BlendFactor : std::uint8_t {
+    One, Zero, SrcColor, InvSrcColor, DestColor, InvDestColor, SrcAlpha, InvSrcAlpha, DestAlpha, InvDestAlpha, SrcAlphaSaturate
+};
+enum class CompareFunc : std::uint8_t { Always, Less, Equal, LessEqual, Greater, NotEqual, GreaterEqual, Never };
+
+// The Lighting model's parameters beside DrawSurface's shared ones (diffuse,
+// normalMap, glowMap, specularMap, tint, emissive*, specularStrength).
+struct LightingParams {
+    glm::vec3     specularColor  = { 1.f, 1.f, 1.f };   // display value
+    float         glossiness     = 80.f;               // the specular exponent
+    // The normal map holds model-space normals (skin, FaceGen heads), not tangent-space ones.
+    bool          modelSpaceNormals = false;
+    // Emissive without a glow map: emissiveColor·emissiveMultiple everywhere (SLSF1_Own_Emit).
+    bool          ownEmit        = false;
+    // Environment reflection: a cube map, masked by envMask's red channel (or the
+    // normal map's alpha when envMask is Invalid and envMaskFromNormalAlpha), × envScale.
+    TextureHandle envMap         = TextureHandle::Invalid;   // a cube texture
+    TextureHandle envMask        = TextureHandle::Invalid;
+    bool          envMaskFromNormalAlpha = false;
+    float         envScale       = 1.f;
+    // Rim, back and soft lighting (SLSF2_Rim_Lighting / Back_Lighting / Soft_Lighting).
+    // effect1 widens soft lighting's wrap; effect2 is the rim's exponent. lightingMap
+    // masks rim / soft light (slot 2 when there is no glow map); backLightMap tints
+    // light from behind (slot 7).
+    bool          rimLight       = false;
+    bool          backLight      = false;
+    bool          softLight      = false;
+    float         effect1        = 0.3f;
+    float         effect2        = 2.f;
+    TextureHandle lightingMap    = TextureHandle::Invalid;
+    TextureHandle backLightMap   = TextureHandle::Invalid;
+    // Parallax: offset the UVs by heightMap (red channel) along the view direction.
+    TextureHandle heightMap      = TextureHandle::Invalid;
+    float         parallaxScale  = 0.04f;
+    // Texture coordinate transform: uv·scale + offset.
+    glm::vec2     uvOffset       = { 0.f, 0.f };
+    glm::vec2     uvScale        = { 1.f, 1.f };
+};
+
 // ── Per-draw surface parameters ───────────────────────────────────────────────
 struct DrawSurface {
     // AlphaTestAndBlend: discard fragments below alphaThreshold AND blend remaining
@@ -113,6 +167,14 @@ struct DrawSurface {
     // order, right after the blended draw submitted before it (NiAlphaProperty's
     // no-sorter bit).
     bool          noSort          = false;
+
+    MaterialModel model           = MaterialModel::Pbr;
+    // Lighting / Effect: the blended modes' factors (AlphaBlend, Additive and
+    // AlphaTestAndBlend all use them) and the tested modes' function.
+    BlendFactor   srcBlend        = BlendFactor::SrcAlpha;
+    BlendFactor   dstBlend        = BlendFactor::InvSrcAlpha;
+    CompareFunc   alphaTestFunc   = CompareFunc::Greater;
+    LightingParams lighting;
 };
 
 // ── Terrain draw surface ──────────────────────────────────────────────────────
@@ -135,6 +197,27 @@ struct PointLight {
     glm::vec3 position{ 0.f };
     glm::vec3 color{ 1.f };
     float     radius = 100.f;
+};
+
+// ── Scene environment (the Lighting model's light) ───────────────────────────
+// Every colour is a display (gamma-encoded) value, as the game's records store
+// them; the Lighting model shades in that space.
+struct SceneEnvironment {
+    glm::vec3 sunDirection = { 0.f, 0.f, 1.f };   // towards the light, normalised
+    glm::vec3 sunColor     = { 1.f, 1.f, 1.f };
+    // Directional ambient: the colour seen by a normal along +X, -X, +Y, -Y, +Z, -Z;
+    // a normal between axes mixes them by its squared components.
+    glm::vec3 ambient[6]   = { glm::vec3(0.2f), glm::vec3(0.2f), glm::vec3(0.2f),
+                               glm::vec3(0.2f), glm::vec3(0.25f), glm::vec3(0.15f) };
+    // Placed lights. `color` is the light's colour × its fade (display value); the
+    // light falls to zero at `radius`.
+    std::vector<PointLight> lights;
+    // Distance fog: amount = max · ((d − near) / (far − near))^power, clamped to
+    // 0..max; its colour runs from nearColor to farColor over the same range.
+    bool      fog      = false;
+    float     fogNear  = 0.f, fogFar = 10000.f, fogPower = 1.f, fogMax = 1.f;
+    glm::vec3 fogNearColor = { 0.5f, 0.5f, 0.5f };
+    glm::vec3 fogFarColor  = { 0.5f, 0.5f, 0.5f };
 };
 
 // ── Face-tint composite layer ─────────────────────────────────────────────────
@@ -345,6 +428,10 @@ struct ISceneRenderer {
     // keeps as many as it can and may ignore the rest; call it before draw calls.
     // Optional, with a default, so renderers written before it build unchanged.
     virtual void SetPointLights(std::span<const PointLight> lights)           { (void)lights; }
+
+    // The Lighting model's light for this frame (see SceneEnvironment). Optional,
+    // with a default, so renderers without the model build unchanged.
+    virtual void SetEnvironment(const SceneEnvironment& environment)          { (void)environment; }
 
     virtual void DrawGrid(float cellSize = 1.f, int halfExtent = 10)          = 0;
 

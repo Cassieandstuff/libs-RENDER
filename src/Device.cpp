@@ -3,8 +3,10 @@
 #include "EngineFactoryD3D12.h"
 #include "EngineFactoryVk.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <thread>
 #include <vector>
 
 namespace render::diligent {
@@ -12,6 +14,12 @@ namespace render::diligent {
 using namespace Diligent;
 
 const char* BackendName(Backend b) { return b == Backend::Vulkan ? "Vulkan" : "D3D12"; }
+
+unsigned ShaderCompileThreads(const DeviceOptions& opts) {
+    if (opts.shaderCompileThreads > 0) return static_cast<unsigned>(opts.shaderCompileThreads);
+    const unsigned cores = std::thread::hardware_concurrency();
+    return std::clamp(cores / 4u, 1u, 4u);
+}
 
 namespace {
 
@@ -40,6 +48,8 @@ void RequestFeatures(EngineCreateInfo& ci, const DeviceOptions& opts) {
     ci.Features.WireframeFill           = DEVICE_FEATURE_STATE_OPTIONAL;
     ci.Features.TextureComponentSwizzle = DEVICE_FEATURE_STATE_OPTIONAL;
     ci.Features.AsyncShaderCompilation  = DEVICE_FEATURE_STATE_OPTIONAL;
+    // Diligent's own default is a thread per core: take the caller's count, or leave most cores free.
+    ci.NumAsyncShaderCompilationThreads = ShaderCompileThreads(opts);
 }
 
 bool TryCreate(Backend backend, const DeviceOptions& opts, RenderDevice::Impl& out, std::string& log) {

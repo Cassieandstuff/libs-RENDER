@@ -53,6 +53,7 @@ DiligentSceneRenderer::Impl::Impl(RenderDevice& dev)
     postCB = CreateDynamicCB(device, "render post CB", sizeof(float) * 8);
     gridCB = CreateDynamicCB(device, "render grid CB", sizeof(float) * (16 * 2 + 4 * 6));
     pbr    = CreatePbrState(*this);
+    lighting = CreateLightingState(*this);
     tint   = CreateFaceTintState(*this);
     overlay = CreateOverlayState(*this);
 }
@@ -277,6 +278,10 @@ void DiligentSceneRenderer::ClearOutputTarget() {
 void             DiligentSceneRenderer::SetExposure(float exposure) { m_impl->exposure = exposure; }
 void             DiligentSceneRenderer::SetViewTransform(ViewTransform transform) { m_impl->viewTransform = transform; }
 void             DiligentSceneRenderer::SetPointLights(std::span<const PointLight> lights) { m_impl->pointLights.assign(lights.begin(), lights.end()); }
+void             DiligentSceneRenderer::SetEnvironment(const SceneEnvironment& environment) {
+    m_impl->environment = environment;
+    LightingBeginFrame(*m_impl);   // its frame constants are rewritten before the next draw
+}
 void             DiligentSceneRenderer::SetViewStyle(const ViewStyle& style) { m_impl->style = style; }
 const ViewStyle& DiligentSceneRenderer::GetViewStyle() const { return m_impl->style; }
 FrameStats       DiligentSceneRenderer::LastFrameStats() const { return m_impl->lastStats; }
@@ -297,6 +302,7 @@ void DiligentSceneRenderer::BeginFrame(int width, int height) {
     r.context->ClearDepthStencil(r.hdrDepth->GetDefaultView(TEXTURE_VIEW_DEPTH_STENCIL), CLEAR_DEPTH_FLAG, 1.f, 0,
                                  RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     PbrBeginFrame(r);
+    LightingBeginFrame(r);
 }
 
 void DiligentSceneRenderer::SetCamera(const glm::mat4& view, const glm::mat4& proj) {

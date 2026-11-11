@@ -514,6 +514,138 @@ void TestDrawQueue(RenderDevice& dev) {
 }
 
 
+// ── 5c. The Lighting model: the game's terms, shaded in display space ─────────
+// With the Standard view transform a display value v comes out as round(v·255),
+// so the expected pixels below are the game's formula done by hand.
+void TestLightingModel(RenderDevice& dev) {
+    std::printf("-- Lighting model --\n");
+    PbrScene s(dev);
+    s.r.SetViewTransform(ViewTransform::Standard);
+    const glm::vec3 centre(0.f), offCentre(0.7f, 0.7f, 0.f);
+    const MeshHandle quad = s.r.UploadMesh(MakeQuad());
+    const MeshHandle nearQ = s.r.UploadMesh(MakeQuad(0.5f));
+
+    auto envWith = [](glm::vec3 sunDir, glm::vec3 sun, glm::vec3 ambientUp) {
+        SceneEnvironment e;
+        e.sunDirection = sunDir;
+        e.sunColor     = sun;
+        for (auto& a : e.ambient) a = glm::vec3(0.f);
+        e.ambient[4] = ambientUp;   // +Z: the quad's normal
+        return e;
+    };
+    DrawSurface lit;
+    lit.model            = MaterialModel::Lighting;
+    lit.specularStrength = 0.f;
+    auto render = [&](const SceneEnvironment& e, auto&& draw) {
+        return s.Render([&](auto& r) {
+            r.SetEnvironment(e);
+            draw(r);
+        });
+    };
+
+    // Lambert + directional ambient: white albedo, sun 0.5 head-on, ambient (+Z) 0.2 → 0.7.
+    auto px = render(envWith({ 0, 0, 1 }, glm::vec3(0.5f), glm::vec3(0.2f)), [&](auto& r) { r.DrawMesh(quad, glm::mat4(1.f), lit); });
+    check("lighting pipelines finish compiling", s.r.LastFrameStats().skippedCompiling == 0 && s.r.LastFrameStats().draws == 1);
+    Rgba p = s.At(px, centre);
+    std::printf("   sun 0.5 + ambient 0.2 -> (%d,%d,%d), expected 179\n", p.r, p.g, p.b);
+    check("Lambert + ambient add in display space (0.7 -> 179)", Near(p.r, 179, 3) && Near(p.g, 179, 3) && Near(p.b, 179, 3));
+
+    // Sun from behind: ambient only.
+    px = render(envWith({ 0, 0, -1 }, glm::vec3(0.5f), glm::vec3(0.2f)), [&](auto& r) { r.DrawMesh(quad, glm::mat4(1.f), lit); });
+    p  = s.At(px, centre);
+    check("a back-lit surface keeps the ambient only (0.2 -> 51)", Near(p.r, 51, 3));
+
+    // Directional ambient picks the axis: a red +Z ambient, a green -Z one; the quad faces +Z.
+    SceneEnvironment e = envWith({ 0, 0, 1 }, glm::vec3(0.f), glm::vec3(0.6f, 0.f, 0.f));
+    e.ambient[5]       = glm::vec3(0.f, 0.6f, 0.f);
+    px = render(e, [&](auto& r) { r.DrawMesh(quad, glm::mat4(1.f), lit); });
+    p  = s.At(px, centre);
+    check("directional ambient uses the normal's axis (+Z red)", Near(p.r, 153, 3) && p.g < 5);
+
+    // Tint and vertex colours multiply the albedo as display values.
+    DrawSurface tinted = lit;
+    tinted.tint = { 0.5f, 1.f, 1.f, 1.f };
+    px = render(envWith({ 0, 0, 1 }, glm::vec3(0.8f), glm::vec3(0.2f)), [&](auto& r) { r.DrawMesh(quad, glm::mat4(1.f), tinted); });
+    p  = s.At(px, centre);
+    check("tint multiplies in display space (0.5 -> 128)", Near(p.r, 128, 3) && Near(p.g, 255, 3));
+
+    // Specular: Blinn-Phong around the reflection of the light; a higher glossiness narrows it.
+    DrawSurface shiny = lit;
+    shiny.specularStrength       = 1.f;
+    shiny.lighting.specularColor = glm::vec3(0.5f);
+    shiny.lighting.glossiness    = 2.f;
+    const SceneEnvironment dim   = envWith({ 0, 0, 1 }, glm::vec3(0.3f), glm::vec3(0.f));
+    px = render(dim, [&](auto& r) { r.DrawMesh(quad, glm::mat4(1.f), shiny); });
+    const Rgba wide = s.At(px, offCentre), wideCentre = s.At(px, centre);
+    shiny.lighting.glossiness = 200.f;
+    px = render(dim, [&](auto& r) { r.DrawMesh(quad, glm::mat4(1.f), shiny); });
+    const Rgba narrow = s.At(px, offCentre), narrowCentre = s.At(px, centre);
+    std::printf("   specular gloss 2: centre %d off %d; gloss 200: centre %d off %d\n", wideCentre.r, wide.r, narrowCentre.r, narrow.r);
+    check("specular peaks where the light reflects to the eye (0.3 + 0.5*0.3 = 0.45 -> 115)", Near(wideCentre.r, 115, 4));
+    check("a higher glossiness narrows the highlight", narrow.r + 10 < wide.r && Near(narrowCentre.r, wideCentre.r, 4));
+
+    // A point light lights within its radius only.
+    SceneEnvironment point = envWith({ 0, 0, 1 }, glm::vec3(0.f), glm::vec3(0.f));
+    point.lights.push_back({ { 0.f, 0.f, 1.f }, glm::vec3(1.f), 4.f });
+    px = render(point, [&](auto& r) { r.DrawMesh(quad, glm::mat4(1.f), lit); });
+    p  = s.At(px, centre);
+    check("a point light falls off as 1 - (d/r)^2 (d 1, r 4 -> 0.9375 -> 239)", Near(p.r, 239, 4));
+    point.lights[0].radius = 0.5f;
+    px = render(point, [&](auto& r) { r.DrawMesh(quad, glm::mat4(1.f), lit); });
+    check("beyond its radius a point light adds nothing", s.At(px, centre).r < 3);
+
+    // Fog: the quad is 3 units away; fog from 0 to 2 at full strength paints it the fog colour.
+    SceneEnvironment fogged = envWith({ 0, 0, 1 }, glm::vec3(0.5f), glm::vec3(0.2f));
+    fogged.fog          = true;
+    fogged.fogNear      = 0.f;
+    fogged.fogFar       = 2.f;
+    fogged.fogNearColor = fogged.fogFarColor = { 0.f, 0.4f, 0.f };
+    px = render(fogged, [&](auto& r) { r.DrawMesh(quad, glm::mat4(1.f), lit); });
+    p  = s.At(px, centre);
+    check("full fog is the fog colour (0.4 -> 102 green)", p.r < 3 && Near(p.g, 102, 3));
+    fogged.fogMax = 0.5f;
+    px = render(fogged, [&](auto& r) { r.DrawMesh(quad, glm::mat4(1.f), lit); });
+    p  = s.At(px, centre);
+    check("fogMax caps it halfway ((0.7 + 0) / 2 -> 89 red)", Near(p.r, 89, 3));
+
+    // Model-space normals: a +X normal map lights from +X, not from +Z.
+    DrawSurface msn = lit;
+    msn.normalMap                   = s.r.LoadTextureFromMemory(MakeDds4x4(128, 128, 255, 255), TexColorSpace::Linear);   // +X
+    msn.lighting.modelSpaceNormals  = true;
+    px = render(envWith({ 1, 0, 0 }, glm::vec3(0.5f), glm::vec3(0.f)), [&](auto& r) { r.DrawMesh(quad, glm::mat4(1.f), msn); });
+    const Rgba fromX = s.At(px, centre);
+    px = render(envWith({ 0, 0, 1 }, glm::vec3(0.5f), glm::vec3(0.f)), [&](auto& r) { r.DrawMesh(quad, glm::mat4(1.f), msn); });
+    const Rgba fromZ = s.At(px, centre);
+    check("a model-space normal map turns the surface (+X lit, +Z not)", Near(fromX.r, 128, 4) && fromZ.r < 5);
+
+    // Blend factors: additive (SrcAlpha, One) red over an opaque green quad gives yellow.
+    DrawSurface green = lit, add = lit;
+    green.tint      = { 0.f, 1.f, 0.f, 1.f };
+    add.tint        = { 1.f, 0.f, 0.f, 1.f };
+    add.blendMode   = DrawSurface::BlendMode::Additive;
+    add.dstBlend    = BlendFactor::One;
+    px = render(envWith({ 0, 0, 1 }, glm::vec3(0.5f), glm::vec3(0.f)), [&](auto& r) {
+        r.DrawMesh(nearQ, glm::mat4(1.f), add);
+        r.DrawMesh(quad, glm::mat4(1.f), green);
+    });
+    p = s.At(px, centre);
+    check("additive blending adds (red over green -> yellow)", p.r > 100 && p.g > 100 && p.b < 5);
+
+    // Alpha test functions: alpha 0.2 against 0.5.
+    DrawSurface faint = lit;
+    faint.tint           = { 1.f, 1.f, 1.f, 0.2f };
+    faint.blendMode      = DrawSurface::BlendMode::AlphaTest;
+    faint.alphaThreshold = 0.5f;
+    faint.alphaTestFunc  = CompareFunc::Greater;
+    const SceneEnvironment plain = envWith({ 0, 0, 1 }, glm::vec3(0.5f), glm::vec3(0.2f));
+    px = render(plain, [&](auto& r) { r.DrawMesh(quad, glm::mat4(1.f), faint); });
+    check("alpha test GREATER cuts alpha below the threshold", !Differs(s.At(px, centre), Background(), 2));
+    faint.alphaTestFunc = CompareFunc::Less;
+    px = render(plain, [&](auto& r) { r.DrawMesh(quad, glm::mat4(1.f), faint); });
+    check("alpha test LESS keeps it, and the surface stays opaque", Near(s.At(px, centre).r, 179, 3));
+}
+
+
 // ── 6. Normal maps ────────────────────────────────────────────────────────────
 // The quad's U runs along +X, so a normal map tilted to +U (red) must face the
 // surface towards +X: lit from +X it is brighter than lit from -X.
@@ -1262,6 +1394,7 @@ int main(int argc, char** argv) {
     TestResources(*dev);
     TestPbr(*dev);
     TestDrawQueue(*dev);
+    TestLightingModel(*dev);
     TestNormalMap(*dev);
     TestFaceTint(*dev);
     TestSkinTint(*dev);

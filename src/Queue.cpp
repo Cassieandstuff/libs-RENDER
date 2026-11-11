@@ -73,7 +73,8 @@ void DiligentSceneRenderer::Impl::FlushQueue() {
         const GpuMesh* mesh = FindMesh(static_cast<MeshHandle>(d->mesh));
         if (!mesh) continue;   // freed mid-frame
         const std::span<const glm::mat4> bones(queuedBones.data() + d->boneOffset, d->boneCount);
-        PbrDraw(*this, *mesh, d->world, bones, d->surface);
+        if (d->surface.model == MaterialModel::Pbr) PbrDraw(*this, *mesh, d->world, bones, d->surface);
+        else LightingDraw(*this, *mesh, d->world, bones, d->surface);   // Effect falls back to Lighting for now
     }
     queue.clear();
     queuedBones.clear();
