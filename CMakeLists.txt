@@ -17,12 +17,30 @@
 
 cmake_minimum_required(VERSION 3.28)
 
+# Core caps for a standalone build (a consumer's build is capped by the consumer). vcpkg builds its ports at project()
+# on every core unless told otherwise: BUILD_CORES or half the machine; VCPKG_MAX_CONCURRENCY in the environment wins.
+if(NOT DEFINED ENV{VCPKG_MAX_CONCURRENCY})
+    if(DEFINED ENV{BUILD_CORES})
+        set(ENV{VCPKG_MAX_CONCURRENCY} "$ENV{BUILD_CORES}")
+    else()
+        cmake_host_system_information(RESULT render_logical_cores QUERY NUMBER_OF_LOGICAL_CORES)
+        math(EXPR render_vcpkg_cores "${render_logical_cores} / 2")
+        if(render_vcpkg_cores LESS 1)
+            set(render_vcpkg_cores 1)
+        endif()
+        set(ENV{VCPKG_MAX_CONCURRENCY} "${render_vcpkg_cores}")
+    endif()
+endif()
+
 project(RENDER
     VERSION 0.1.0
     DESCRIPTION "Backend-neutral scene renderer interface and its Diligent Engine backend"
     LANGUAGES C CXX)
 
 if(PROJECT_IS_TOP_LEVEL)
+    # The compiler cap (Directory.Build.props: BUILD_CORES or half the machine) is found by MSBuild above each project
+    # file, so a build folder outside the source tree gets its own copy.
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/Directory.Build.props" "${CMAKE_BINARY_DIR}/Directory.Build.props" COPYONLY)
     set(CMAKE_CXX_STANDARD 23)
     set(CMAKE_CXX_STANDARD_REQUIRED ON)
     set(CMAKE_CXX_EXTENSIONS OFF)

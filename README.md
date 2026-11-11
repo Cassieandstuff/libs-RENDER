@@ -158,6 +158,9 @@ cmake --build build --config Release
 ctest --test-dir build -C Release            # -LE gpu skips the GPU tests
 ```
 
+Builds are capped at half the machine's cores (`Directory.Build.props` for the compiler, `VCPKG_MAX_CONCURRENCY` for
+vcpkg); `BUILD_CORES` in the environment sets both. Don't pass `-j` or a bare `/MP`.
+
 Standalone, `vcpkg.json` supplies glm, and Diligent is fetched at the pins in `CMakeLists.txt`. Diligent's configure
 step runs Python 3 and installs libclang and jinja2 with pip; a venv in the build tree keeps that out of the system
 Python. A consumer that already builds Diligent (a `DiligentFX` target) shares its copy. `-DRENDER_DILIGENT=OFF` builds

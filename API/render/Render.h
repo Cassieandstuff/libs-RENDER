@@ -368,10 +368,15 @@ struct IOverlayRenderer {
 //   DrawGrid / DrawMesh / DrawSkinnedMesh  (any order)
 //   EndFrame()                — draw what was queued, resolve the frame
 //
-// Mesh draws are queued and drawn at EndFrame in an order of the renderer's
-// choosing: opaque surfaces, then alpha-tested ones, then blended ones back to
-// front by their bounds' centre (see DrawSurface::noSort). The camera and lights
-// in effect at EndFrame light the whole frame.
+// Draw order. Mesh draws are queued and drawn when the queue is flushed, in an
+// order of the renderer's choosing: opaque surfaces, then alpha-tested ones, then
+// blended ones back to front by their bounds' centre (see DrawSurface::noSort).
+// The queue flushes at EndFrame, or earlier at FlushScene(). EndFrame then runs,
+// in this order: the flush, the tone map into the output, the grid, the overlays
+// (IOverlayRenderer, against the finished scene depth). So an overlay call may come
+// before or after the mesh draws it covers, and a readback of the output (or of
+// anything the scene pass writes) sees the whole frame only after EndFrame.
+// The camera and lights in effect at a flush light what it draws.
 struct ISceneRenderer {
     virtual ~ISceneRenderer() = default;
 
@@ -383,6 +388,11 @@ struct ISceneRenderer {
     virtual void BeginFrame(int width, int height)                            = 0;
     virtual void SetCamera(const glm::mat4& view, const glm::mat4& proj)     = 0;
     virtual void EndFrame()                                                   = 0;
+    // Draw what is queued now, into the scene. Later draws sort among themselves
+    // only and land over what was flushed (depth-tested against it): a layer the
+    // caller wants drawn after everything so far, whatever it is. Optional, with a
+    // default that does nothing, for renderers that draw at once.
+    virtual void FlushScene() {}
 
     // ── GPU resource management ───────────────────────────────────────────────
     virtual MeshHandle    UploadMesh  (const MeshData& data)                  = 0;

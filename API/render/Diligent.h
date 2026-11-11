@@ -247,6 +247,7 @@ public:
     void BeginFrame(int width, int height) override;
     void SetCamera(const glm::mat4& view, const glm::mat4& proj) override;
     void EndFrame() override;
+    void FlushScene() override;
 
     MeshHandle    UploadMesh(const MeshData& data) override;
     void          FreeMesh(MeshHandle handle) override;

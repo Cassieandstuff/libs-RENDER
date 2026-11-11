@@ -277,7 +277,10 @@ void DiligentSceneRenderer::ClearOutputTarget() {
 
 void             DiligentSceneRenderer::SetExposure(float exposure) { m_impl->exposure = exposure; }
 void             DiligentSceneRenderer::SetViewTransform(ViewTransform transform) { m_impl->viewTransform = transform; }
-void             DiligentSceneRenderer::SetPointLights(std::span<const PointLight> lights) { m_impl->pointLights.assign(lights.begin(), lights.end()); }
+void             DiligentSceneRenderer::SetPointLights(std::span<const PointLight> lights) {
+    m_impl->pointLights.assign(lights.begin(), lights.end());
+    PbrBeginFrame(*m_impl);   // its frame constants are rewritten before the next draw
+}
 void             DiligentSceneRenderer::SetEnvironment(const SceneEnvironment& environment) {
     m_impl->environment = environment;
     LightingBeginFrame(*m_impl);   // its frame constants are rewritten before the next draw
@@ -312,12 +315,19 @@ void DiligentSceneRenderer::SetCamera(const glm::mat4& view, const glm::mat4& pr
     r.projZO    = DepthZeroToOne(proj);
     r.viewProj  = r.projZO * view;
     r.cameraPos = glm::vec3(glm::inverse(view)[3]);
+    PbrBeginFrame(r);   // the passes' frame constants are rewritten before their next draw
+    LightingBeginFrame(r);
 }
 
 void DiligentSceneRenderer::SetLight(const glm::vec3& dir, const glm::vec3& color, const glm::vec3& ambient) {
     m_impl->lightDir   = dir;
     m_impl->lightColor = color;
     m_impl->ambient    = ambient;
+    PbrBeginFrame(*m_impl);
+}
+
+void DiligentSceneRenderer::FlushScene() {
+    if (m_impl->inFrame) m_impl->FlushQueue();
 }
 
 void DiligentSceneRenderer::EndFrame() {

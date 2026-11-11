@@ -1160,6 +1160,46 @@ void TestOverlayScreen(RenderDevice& dev) {
     check("overlay calls outside a frame are ignored", !Differs(PixelAt(target->ReadbackRGBA8(), W, 5, 5), bg, 1));
 }
 
+// ── 5d. Frame order: overlays after the queued scene, FlushScene ──────────────
+void TestFrameOrder(RenderDevice& dev) {
+    std::printf("-- frame order --\n");
+    PbrScene s(dev);   // camera on +Z at 3; the quad at z = 0 spans ±1
+    const MeshHandle quad  = s.r.UploadMesh(MakeQuad());
+    const MeshHandle nearQ = s.r.UploadMesh(MakeQuad(0.5f));
+    const Rgba8 behind{ 250, 20, 200, 255 }, front{ 240, 240, 20, 255 };
+
+    // Overlays submitted before the mesh still test against it: the queue flushes before the overlays draw.
+    auto px = s.Render([&](auto& r) {
+        r.DrawOverlayLines(Seg({ 0.6f, -0.5f, -1.f }, { 0.6f, 0.5f, -1.f }, behind), 4.f, OverlayDepth::Tested);
+        r.DrawOverlayLines(Seg({ -0.6f, -0.5f, 0.5f }, { -0.6f, 0.5f, 0.5f }, front), 4.f, OverlayDepth::Tested);
+        r.DrawMesh(quad, glm::mat4(1.f));
+    });
+    check("an overlay called before the mesh is still hidden behind it", !Exact(s.At(px, { 0.6f, 0.f, -1.f }), behind, 40));
+    check("an overlay called before the mesh still shows in front of it", Exact(s.At(px, { -0.6f, 0.f, 0.5f }), front));
+
+    // FlushScene: what follows draws after what was flushed, whatever its kind. A blended near quad flushed first, then
+    // an opaque far one: the opaque one (no depth from the blend) paints over it, where without the flush it sits under.
+    DrawSurface half, solid;
+    half.tint      = { 1.f, 0.05f, 0.05f, 0.6f };
+    half.blendMode = DrawSurface::BlendMode::AlphaBlend;
+    solid.tint     = { 0.05f, 1.f, 0.05f, 1.f };
+    px = s.Render([&](auto& r) {
+        r.DrawMesh(nearQ, glm::mat4(1.f), half);
+        r.DrawMesh(quad, glm::mat4(1.f), solid);
+    });
+    const Rgba sorted = s.At(px, glm::vec3(0.f));
+    px = s.Render([&](auto& r) {
+        r.DrawMesh(nearQ, glm::mat4(1.f), half);
+        r.FlushScene();
+        r.DrawMesh(quad, glm::mat4(1.f), solid);
+    });
+    const Rgba flushed = s.At(px, glm::vec3(0.f));
+    std::printf("   sorted (%d,%d,%d), flushed early (%d,%d,%d)\n", sorted.r, sorted.g, sorted.b, flushed.r, flushed.g, flushed.b);
+    check("without a flush the blend lands over the opaque quad", sorted.r > 60);
+    check("after FlushScene the later opaque quad lands over the flushed blend", flushed.r < sorted.r - 40 && flushed.g > flushed.r);
+}
+
+
 void TestOverlayDepth(RenderDevice& dev) {
     std::printf("-- overlays: depth modes against a mesh --\n");
     PbrScene s(dev);   // camera on +Z at 3; the quad at z = 0 spans ±1
@@ -1395,6 +1435,7 @@ int main(int argc, char** argv) {
     TestPbr(*dev);
     TestDrawQueue(*dev);
     TestLightingModel(*dev);
+    TestFrameOrder(*dev);
     TestNormalMap(*dev);
     TestFaceTint(*dev);
     TestSkinTint(*dev);

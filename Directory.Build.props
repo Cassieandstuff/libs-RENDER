@@ -1,0 +1,14 @@
+<Project>
+  <!-- Caps a build's compiler at half the machine's cores, so a plain build leaves the machine usable; BUILD_CORES in the environment overrides it.
+       Every project under this folder picks it up, fetched dependencies with a bare /MP included. cmake build's -j multiplies it: don't pass one. -->
+  <PropertyGroup>
+    <BuildCoreCap Condition="'$(BUILD_CORES)' != ''">$(BUILD_CORES)</BuildCoreCap>
+    <BuildCoreCap Condition="'$(BuildCoreCap)' == ''">$([System.Math]::Max(1, $([System.Math]::Floor($([MSBuild]::Divide($(NUMBER_OF_PROCESSORS), 2))))))</BuildCoreCap>
+    <CL_MPCount>$(BuildCoreCap)</CL_MPCount>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <ProcessorNumber>$(BuildCoreCap)</ProcessorNumber>
+    </ClCompile>
+  </ItemDefinitionGroup>
+</Project>
