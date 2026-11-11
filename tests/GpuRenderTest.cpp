@@ -187,6 +187,13 @@ std::vector<std::uint8_t> MakeDds4x4(std::uint8_t b, std::uint8_t g, std::uint8_
     return bytes;
 }
 
+// A 4×4 BGRA8 texture: the top two rows one colour, the bottom two another (a 2D gradient's rows).
+std::vector<std::uint8_t> MakeDdsRows(std::array<std::uint8_t, 4> top, std::array<std::uint8_t, 4> bottom) {
+    std::vector<std::uint8_t> bytes = MakeDds4x4(top[0], top[1], top[2], top[3]);
+    for (int i = 8; i < 16; ++i) std::memcpy(bytes.data() + 128 + i * 4, bottom.data(), 4);
+    return bytes;
+}
+
 // A 4×4 BGRA8 cube map, every face one colour.
 std::vector<std::uint8_t> MakeCubeDds4x4(std::uint8_t b, std::uint8_t g, std::uint8_t r, std::uint8_t a) {
     std::vector<std::uint8_t> bytes = MakeDds4x4(b, g, r, a);
@@ -732,6 +739,16 @@ void TestEffectModel(RenderDevice& dev) {
     pal.effect.paletteColor = true;
     p = shoot([&](auto& r) { r.DrawMesh(quad, glm::mat4(1.f), pal); });
     check("greyscale to palette takes the palette's colour", p.r > 240 && p.g < 5 && p.b < 5);
+
+    // The palette is 2D: the base colour (× vertex colour) picks its row, and doesn't also tint the result. Red on top
+    // (v < 0.5), green below: a base red of 0.1 reads the red row, 0.9 the green one, each at full strength.
+    pal.effect.palette   = s.r.LoadTextureFromMemory(MakeDdsRows({ 0, 0, 255, 255 }, { 0, 255, 0, 255 }), TexColorSpace::Srgb);
+    pal.effect.baseColor = { 0.1f, 0.1f, 0.1f, 1.f };
+    p = shoot([&](auto& r) { r.DrawMesh(quad, glm::mat4(1.f), pal); });
+    check("a low base colour reads the palette's top row, untinted", p.r > 240 && p.g < 5);
+    pal.effect.baseColor = { 0.9f, 0.9f, 0.9f, 1.f };
+    p = shoot([&](auto& r) { r.DrawMesh(quad, glm::mat4(1.f), pal); });
+    check("a high base colour reads its bottom row", p.g > 240 && p.r < 5);
 
     // Falloff: facing the eye, the start opacity (0.2) holds; blended, the background shows through.
     DrawSurface fall  = fx;

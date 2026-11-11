@@ -25,7 +25,7 @@
 //   ALPHA_TEST              discard by g_Alpha (threshold, function)
 //   NORMAL_MAP_GREEN_UP     the normal map's green points to -V (OpenGL style); 0 = towards +V
 //   EFFECT                  the Effect model instead: unlit, g_Diffuse × base colour × vertex colour, then:
-//     PALETTE               g_Palette indexed by the source's red (greyscale to palette colour / alpha)
+//     PALETTE               g_Palette, a 2D gradient: across by the source's grey (or alpha), down by base × vertex colour
 //     FALLOFF               opacity by the view angle
 //     SOFT_DEPTH            fades out near what lies behind (g_SceneDepth, the scene before the blended draws)
 namespace render::diligent::shaders {
@@ -56,9 +56,10 @@ cbuffer LightingDraw {
     float4   g_UV;                   // offset.xy, scale.zw
     float4   g_Alpha;                // threshold, function, additive (fog fades it out), blended (alpha is coverage)
     float4   g_Srgb;                 // 1 where the texture is sRGB: diffuse, glow, env, back light
-    float4   g_EffectColor;          // Effect: base colour (rgb × scale), alpha
+    float4   g_EffectColor;          // Effect: base colour rgb, alpha
     float4   g_Falloff;              // Effect: start, stop (cosines), start opacity, stop opacity
     float4   g_EffectFlags;          // Effect: soft depth, palette colour, palette alpha, palette sRGB
+    float4   g_EffectScale;          // Effect: x = base colour scale
 };
 )";
 
@@ -250,16 +251,24 @@ float ViewDepth(float depth) {
 
 #if EFFECT
 float4 EffectMain(PSIn i, float3 v, float2 uv) {
-    float4 src = g_Diffuse.Sample(g_Diffuse_sampler, uv);
-    float3 c   = Stored(src.rgb, g_Srgb.x);
-    float  a   = src.a;
+    float4 src  = g_Diffuse.Sample(g_Diffuse_sampler, uv);
+    float3 c    = Stored(src.rgb, g_Srgb.x);
+    float  a    = src.a;
+    float3 tint = g_EffectColor.rgb * i.color.rgb;
+    float  ta   = g_EffectColor.a * i.color.a;
 #if PALETTE
-    float4 pal = g_Palette.Sample(g_Palette_sampler, float2(saturate(c.r), 0.5));
-    if (g_EffectFlags.y > 0.5) c = Stored(pal.rgb, g_EffectFlags.w);
-    if (g_EffectFlags.z > 0.5) a = pal.a;
+    // The gradient's row is the tint: it picks the colour rather than multiplying it.
+    if (g_EffectFlags.y > 0.5) {
+        c    = Stored(g_Palette.Sample(g_Palette_sampler, float2(saturate(c.g), saturate(tint.r * g_EffectScale.x))).rgb, g_EffectFlags.w);
+        tint = float3(1.0, 1.0, 1.0);
+    }
+    if (g_EffectFlags.z > 0.5) {
+        a  = g_Palette.Sample(g_Palette_sampler, float2(saturate(a), saturate(ta))).a;
+        ta = 1.0;
+    }
 #endif
-    c *= g_EffectColor.rgb * i.color.rgb;
-    a *= g_EffectColor.a * i.color.a;
+    c *= tint * g_EffectScale.x;
+    a *= ta;
 #if FALLOFF
     float ndv = abs(dot(normalize(i.nrm), v));
     float t   = saturate((ndv - g_Falloff.y) / max(g_Falloff.x - g_Falloff.y, 1e-4));

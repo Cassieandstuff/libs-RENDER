@@ -110,7 +110,7 @@ struct FrameConstants {
 struct DrawConstants {
     glm::mat4 world;
     glm::vec4 tint, specColor, emissive, effects, uv, alpha, srgb;
-    glm::vec4 effectColor, falloff, effectFlags;
+    glm::vec4 effectColor, falloff, effectFlags, effectScale;
 };
 
 // The textures a pipeline may bind, in order (name, its feature gate).
@@ -456,7 +456,8 @@ void LightingDraw(DiligentSceneRenderer::Impl& r, const GpuMesh& mesh, const glm
                          blended && fixed.dst == BlendFactor::One ? 1.f : 0.f, blended ? 1.f : 0.f };
         auto srgb    = [](const GpuTexture* t) { return t && t->srgb ? 1.f : 0.f; };
         d->srgb      = { srgb(diffuse), srgb(glow), srgb(env), srgb(backMap) };
-        d->effectColor = glm::vec4(glm::vec3(E.baseColor) * E.baseColorScale, E.baseColor.a);
+        d->effectColor = E.baseColor;
+        d->effectScale = { E.baseColorScale, 0.f, 0.f, 0.f };
         d->falloff     = { E.falloffStartAngle, E.falloffStopAngle, E.falloffStartOpacity, E.falloffStopOpacity };
         d->effectFlags = { E.softDepth, E.paletteColor ? 1.f : 0.f, E.paletteAlpha ? 1.f : 0.f, srgb(palette) };
         if (s.model == MaterialModel::Effect) d->uv = { E.uvOffset.x, E.uvOffset.y, E.uvScale.x, E.uvScale.y };

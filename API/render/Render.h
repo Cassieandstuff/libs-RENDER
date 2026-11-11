@@ -133,8 +133,11 @@ struct LightingParams {
 struct EffectParams {
     glm::vec4     baseColor      = { 1.f, 1.f, 1.f, 1.f };   // display rgb, alpha
     float         baseColorScale = 1.f;                      // × rgb (an effect's brightness)
-    // Greyscale to palette: the source's red indexes this gradient (u = 0..1 across,
-    // read along its middle row); it replaces colour and / or alpha.
+    // Greyscale to palette, as the game's: a 2D gradient looked up per pixel. Colour:
+    // across (u) by the source's grey (green), down (v) by base colour red × vertex
+    // red × baseColorScale; it replaces the colour (then × baseColorScale), and vertex
+    // and base colour tint no further. Alpha: across by the source's alpha, down by
+    // base alpha × vertex alpha; it replaces the alpha likewise.
     TextureHandle palette        = TextureHandle::Invalid;
     bool          paletteColor   = false;
     bool          paletteAlpha   = false;
