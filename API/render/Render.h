@@ -82,7 +82,10 @@ struct Rgba8 {
 //             in display (gamma) space as the game does: every colour it reads —
 //             textures, vertex colours, tint, specular / emissive colours and
 //             SceneEnvironment — is a display value. Lit by SetEnvironment.
-//   Effect    reserved: falls back to Lighting until the effect model lands.
+//   Effect    unlit, as the game's effect shader: the diffuse (source texture) ×
+//             DrawSurface::effect's base colour × vertex colour, with greyscale-to-
+//             palette, view-angle falloff and a soft depth fade, and fog. Display
+//             values throughout, like Lighting.
 enum class MaterialModel : std::uint8_t { Pbr, Lighting, Effect };
 
 // Blend factors and alpha-test functions, for the Lighting and Effect models'
@@ -121,6 +124,28 @@ struct LightingParams {
     // Parallax: offset the UVs by heightMap (red channel) along the view direction.
     TextureHandle heightMap      = TextureHandle::Invalid;
     float         parallaxScale  = 0.04f;
+    // Texture coordinate transform: uv·scale + offset.
+    glm::vec2     uvOffset       = { 0.f, 0.f };
+    glm::vec2     uvScale        = { 1.f, 1.f };
+};
+
+// The Effect model's parameters (DrawSurface::effect).
+struct EffectParams {
+    glm::vec4     baseColor      = { 1.f, 1.f, 1.f, 1.f };   // display rgb, alpha
+    float         baseColorScale = 1.f;                      // × rgb (an effect's brightness)
+    // Greyscale to palette: the source's red indexes this gradient (u = 0..1 across,
+    // read along its middle row); it replaces colour and / or alpha.
+    TextureHandle palette        = TextureHandle::Invalid;
+    bool          paletteColor   = false;
+    bool          paletteAlpha   = false;
+    // Falloff: opacity by how squarely the surface faces the eye, as cosines (1 =
+    // facing): startOpacity at startAngle, stopOpacity at stopAngle, mixed between.
+    bool          falloff             = false;
+    float         falloffStartAngle   = 1.f, falloffStopAngle = 0.f;
+    float         falloffStartOpacity = 1.f, falloffStopOpacity = 0.f;
+    // > 0 (blended surfaces): fades out within this distance (world units) of what
+    // lies behind it, so it meets the scene softly (soft particles).
+    float         softDepth      = 0.f;
     // Texture coordinate transform: uv·scale + offset.
     glm::vec2     uvOffset       = { 0.f, 0.f };
     glm::vec2     uvScale        = { 1.f, 1.f };
@@ -181,6 +206,7 @@ struct DrawSurface {
     BlendFactor   dstBlend        = BlendFactor::InvSrcAlpha;
     CompareFunc   alphaTestFunc   = CompareFunc::Greater;
     LightingParams lighting;
+    EffectParams   effect;
     // Non-zero: picks (ISceneRenderer::RequestPick) report this surface by this id.
     std::uint32_t pickId          = 0;
     // Wireframe over shaded: alpha > 0 draws this surface's edges again in this colour (a display value, exact like an

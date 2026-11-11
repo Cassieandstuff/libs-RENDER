@@ -697,6 +697,69 @@ void TestLightingModel(RenderDevice& dev) {
     }
 }
 
+// ── 5c''''. The Effect model: unlit colour, palette, falloff, soft depth ─────────
+void TestEffectModel(RenderDevice& dev) {
+    std::printf("-- Effect model --\n");
+    PbrScene s(dev);
+    s.r.SetViewTransform(ViewTransform::Standard);
+    const MeshHandle quad  = s.r.UploadMesh(MakeQuad(0.f));
+    const MeshHandle front = s.r.UploadMesh(MakeQuad(0.05f));
+    SceneEnvironment dark;   // no light at all: an unlit surface shows anyway
+    dark.sunColor = glm::vec3(0.f);
+    for (auto& a : dark.ambient) a = glm::vec3(0.f);
+    auto shoot = [&](auto&& draw) {
+        auto px = s.Render([&](auto& r) {
+            r.SetEnvironment(dark);
+            draw(r);
+        });
+        return s.At(px, glm::vec3(0.f));
+    };
+    DrawSurface fx;
+    fx.model            = MaterialModel::Effect;
+    fx.effect.baseColor = { 0.5f, 0.5f, 0.5f, 1.f };
+    Rgba p = shoot([&](auto& r) { r.DrawMesh(quad, glm::mat4(1.f), fx); });
+    check("an effect is unlit: its base colour shows in the dark (0.5 -> 128)", Near(p.r, 128, 3) && Near(p.g, 128, 3));
+    fx.effect.baseColorScale = 2.f;
+    p = shoot([&](auto& r) { r.DrawMesh(quad, glm::mat4(1.f), fx); });
+    check("the base colour scale brightens it (x2 -> 255)", p.r >= 252);
+    fx.effect.baseColorScale = 1.f;
+
+    // Greyscale to palette: a grey source indexes a red palette.
+    DrawSurface pal = fx;
+    pal.effect.baseColor    = { 1.f, 1.f, 1.f, 1.f };
+    pal.diffuse             = s.r.LoadTextureFromMemory(MakeDds4x4(64, 64, 64, 255), TexColorSpace::Srgb);
+    pal.effect.palette      = s.r.LoadTextureFromMemory(MakeDds4x4(0, 0, 255, 255), TexColorSpace::Srgb);   // red
+    pal.effect.paletteColor = true;
+    p = shoot([&](auto& r) { r.DrawMesh(quad, glm::mat4(1.f), pal); });
+    check("greyscale to palette takes the palette's colour", p.r > 240 && p.g < 5 && p.b < 5);
+
+    // Falloff: facing the eye, the start opacity (0.2) holds; blended, the background shows through.
+    DrawSurface fall  = fx;
+    fall.blendMode    = DrawSurface::BlendMode::AlphaBlend;
+    fall.effect.baseColor = { 1.f, 1.f, 1.f, 1.f };
+    const Rgba solid  = shoot([&](auto& r) { r.DrawMesh(quad, glm::mat4(1.f), fall); });
+    fall.effect.falloff             = true;
+    fall.effect.falloffStartOpacity = 0.2f;
+    fall.effect.falloffStopOpacity  = 1.f;
+    const Rgba faded  = shoot([&](auto& r) { r.DrawMesh(quad, glm::mat4(1.f), fall); });
+    std::printf("   falloff: off %d, facing (start opacity 0.2) %d\n", solid.r, faded.r);
+    check("falloff fades a surface that faces the eye to its start opacity", faded.r + 60 < solid.r);
+
+    // Soft depth: a blended effect 0.05 in front of an opaque quad, with soft depth 1, nearly vanishes into it.
+    DrawSurface wall;
+    wall.model            = MaterialModel::Effect;
+    wall.effect.baseColor = { 0.f, 0.f, 1.f, 1.f };   // blue backdrop
+    DrawSurface glow = fx;
+    glow.blendMode        = DrawSurface::BlendMode::AlphaBlend;
+    glow.effect.baseColor = { 1.f, 0.f, 0.f, 1.f };   // red
+    const Rgba hard = shoot([&](auto& r) { r.DrawMesh(quad, glm::mat4(1.f), wall); r.DrawMesh(front, glm::mat4(1.f), glow); });
+    glow.effect.softDepth = 1.f;
+    const Rgba softly = shoot([&](auto& r) { r.DrawMesh(quad, glm::mat4(1.f), wall); r.DrawMesh(front, glm::mat4(1.f), glow); });
+    std::printf("   soft depth: off (%d,%d,%d), on (%d,%d,%d)\n", hard.r, hard.g, hard.b, softly.r, softly.g, softly.b);
+    check("without soft depth the effect covers what is behind it", hard.r > 240 && hard.b < 20);
+    check("with soft depth it fades where it meets the surface behind", softly.b > 150 && softly.r < 120);
+}
+
 // ── 5c'''. Image space: adaptation, tone, grade, bloom ───────────────────────────
 // A Lighting quad lit to a known display value (0.7: linear 0.448), as in TestLightingModel.
 void TestImageSpace(RenderDevice& dev) {
@@ -1728,6 +1791,7 @@ int main(int argc, char** argv) {
     TestPbr(*dev);
     TestDrawQueue(*dev);
     TestLightingModel(*dev);
+    TestEffectModel(*dev);
     TestImageSpace(*dev);
     TestPick(*dev);
     TestUpdateMesh(*dev);

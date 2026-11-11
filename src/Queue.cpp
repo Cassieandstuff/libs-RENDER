@@ -68,13 +68,35 @@ void DiligentSceneRenderer::Impl::FlushQueue() {
         return a->bucket == 2 ? a->depth > b->depth : a->depth < b->depth;
     });
 
+    // A soft effect reads the depth of what lies behind it: copy the scene depth once the opaque and tested draws are in.
+    const bool soft = std::ranges::any_of(order, [](const QueuedDraw* d) {
+        return d->bucket == 2 && d->surface.model == MaterialModel::Effect && d->surface.effect.softDepth > 0.f;
+    });
+    if (soft) {
+        const Diligent::TextureDesc& dd = hdrDepth->GetDesc();
+        if (!sceneDepthCopy || sceneDepthCopy->GetDesc().Width != dd.Width || sceneDepthCopy->GetDesc().Height != dd.Height) {
+            Diligent::TextureDesc desc = dd;
+            desc.Name      = "render scene depth copy";
+            desc.BindFlags = Diligent::BIND_DEPTH_STENCIL | Diligent::BIND_SHADER_RESOURCE;
+            sceneDepthCopy.Release();
+            device->CreateTexture(desc, nullptr, &sceneDepthCopy);
+        }
+    }
+    bool copied = false;
     BindSceneTargets();
     for (const QueuedDraw* d : order) {
+        if (soft && !copied && d->bucket == 2 && sceneDepthCopy) {
+            Diligent::CopyTextureAttribs copy{ hdrDepth, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION, sceneDepthCopy,
+                                               Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION };
+            context->CopyTexture(copy);
+            BindSceneTargets();
+            copied = true;
+        }
         const GpuMesh* mesh = FindMesh(static_cast<MeshHandle>(d->mesh));
         if (!mesh) continue;   // freed mid-frame
         const std::span<const glm::mat4> bones(queuedBones.data() + d->boneOffset, d->boneCount);
         if (d->surface.model == MaterialModel::Pbr) PbrDraw(*this, *mesh, d->world, bones, d->surface);
-        else LightingDraw(*this, *mesh, d->world, bones, d->surface);   // Effect falls back to Lighting for now
+        else LightingDraw(*this, *mesh, d->world, bones, d->surface);   // Lighting and Effect share the pass
     }
     // A pick (asked for at any point in the frame) replays the frame's pickable draws at EndFrame, whatever flushes came
     // between, so they are kept.

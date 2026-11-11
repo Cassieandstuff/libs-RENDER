@@ -48,11 +48,16 @@ enum Feature : std::uint32_t {
     kParallax         = 1u << 16,
     kAlphaTest        = 1u << 17,
     kVertexTangents   = 1u << 18,
+    kEffect           = 1u << 19,
+    kPalette          = 1u << 20,
+    kFalloff          = 1u << 21,
+    kSoftDepth        = 1u << 22,
 };
 constexpr const char* kFeatureMacros[] = {
     "SKINNED", "VERTEX_COLORS", "NORMAL_MAP", "MODEL_SPACE_NORMALS", "SPEC_NORMAL_ALPHA", "SPEC_MAP",
     "GLOW_MAP", "OWN_EMIT", "ENV_MAP", "ENV_MASK", "ENV_MASK_NORMAL_ALPHA", "RIM_LIGHT", "SOFT_LIGHT",
     "LIGHTING_MAP", "BACK_LIGHT", "BACK_LIGHT_MAP", "PARALLAX", "ALPHA_TEST", "VERTEX_TANGENTS",
+    "EFFECT", "PALETTE", "FALLOFF", "SOFT_DEPTH",
 };
 constexpr int kNumFeatures = static_cast<int>(std::size(kFeatureMacros));
 
@@ -99,11 +104,13 @@ struct FrameConstants {
     glm::vec4 lightInfo;
     glm::vec4 lightPos[kMaxLights];
     glm::vec4 lightColor[kMaxLights];
+    glm::vec4 invProjZ, invProjW;
 };
 
 struct DrawConstants {
     glm::mat4 world;
     glm::vec4 tint, specColor, emissive, effects, uv, alpha, srgb;
+    glm::vec4 effectColor, falloff, effectFlags;
 };
 
 // The textures a pipeline may bind, in order (name, its feature gate).
@@ -117,6 +124,8 @@ constexpr TextureSlot kSlots[] = {
     { "g_Env", kEnvMap },        { "g_EnvMask", kEnvMask },
     { "g_LightingMap", kLightingMap }, { "g_BackLightMap", kBackLightMap },
     { "g_Height", kParallax },
+    { "g_Palette", kPalette },
+    { "g_SceneDepth", kSoftDepth },
 };
 constexpr std::size_t kNumSlots = std::size(kSlots);
 
@@ -259,7 +268,9 @@ LightingState::Variant& VariantFor(DiligentSceneRenderer::Impl& r, LightingState
     for (const TextureSlot& slot : kSlots) {
         if (slot.gate && !(features & slot.gate)) continue;
         vars.push_back({ SHADER_TYPE_PIXEL, slot.name, SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC });
-        samplers.push_back({ SHADER_TYPE_PIXEL, slot.name, std::strcmp(slot.name, "g_Env") == 0 ? Sam_LinearClamp : aniso });
+        if (std::strcmp(slot.name, "g_SceneDepth") == 0) continue;   // read with Load: no sampler
+        const bool clamped = std::strcmp(slot.name, "g_Env") == 0 || std::strcmp(slot.name, "g_Palette") == 0;
+        samplers.push_back({ SHADER_TYPE_PIXEL, slot.name, clamped ? Sam_LinearClamp : aniso });
     }
     ci.PSODesc.ResourceLayout.DefaultVariableType  = SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
     ci.PSODesc.ResourceLayout.Variables            = vars.data();
@@ -308,6 +319,10 @@ void WriteFrame(DiligentSceneRenderer::Impl& r, LightingState& st) {
         f->lightPos[i]   = glm::vec4(e.lights[i].position, e.lights[i].radius);
         f->lightColor[i] = glm::vec4(e.lights[i].color, 0.f);
     }
+    // Rows 2 and 3 of the inverse projection: a depth value (with x = y = 0) back to view space.
+    const glm::mat4 invProj = glm::inverse(r.projZO);
+    f->invProjZ = { invProj[0][2], invProj[1][2], invProj[2][2], invProj[3][2] };
+    f->invProjW = { invProj[0][3], invProj[1][3], invProj[2][3], invProj[3][3] };
 }
 
 } // namespace
@@ -390,6 +405,18 @@ void LightingDraw(DiligentSceneRenderer::Impl& r, const GpuMesh& mesh, const glm
     }
     if (height) f |= kParallax;
     if (mesh.tangents && (f & (kNormalMap | kParallax))) f |= kVertexTangents;
+    // The Effect model reads only the source texture, the palette and the scene depth.
+    const EffectParams& E = s.effect;
+    GpuTexture* palette = nullptr;
+    if (s.model == MaterialModel::Effect) {
+        f &= kSkinned | kVertexColors;
+        f |= kEffect;
+        palette = r.FindTexture(E.palette);
+        flat2d(palette, "effect.palette");
+        if (palette && (E.paletteColor || E.paletteAlpha)) f |= kPalette;
+        if (E.falloff) f |= kFalloff;
+        if (E.softDepth > 0.f && blended && r.sceneDepthCopy) f |= kSoftDepth;
+    }
     if (tested) f |= kAlphaTest;
 
     FixedState fixed;
@@ -429,6 +456,10 @@ void LightingDraw(DiligentSceneRenderer::Impl& r, const GpuMesh& mesh, const glm
                          blended && fixed.dst == BlendFactor::One ? 1.f : 0.f, blended ? 1.f : 0.f };
         auto srgb    = [](const GpuTexture* t) { return t && t->srgb ? 1.f : 0.f; };
         d->srgb      = { srgb(diffuse), srgb(glow), srgb(env), srgb(backMap) };
+        d->effectColor = glm::vec4(glm::vec3(E.baseColor) * E.baseColorScale, E.baseColor.a);
+        d->falloff     = { E.falloffStartAngle, E.falloffStopAngle, E.falloffStartOpacity, E.falloffStopOpacity };
+        d->effectFlags = { E.softDepth, E.paletteColor ? 1.f : 0.f, E.paletteAlpha ? 1.f : 0.f, srgb(palette) };
+        if (s.model == MaterialModel::Effect) d->uv = { E.uvOffset.x, E.uvOffset.y, E.uvScale.x, E.uvScale.y };
     }
     if (skinned) {
         const Uint32 n = static_cast<Uint32>(std::min<std::size_t>(bones.size(), kMaxJoints));
@@ -443,10 +474,11 @@ void LightingDraw(DiligentSceneRenderer::Impl& r, const GpuMesh& mesh, const glm
     // Textures: what the variant reads; a missing optional map never reaches here (its feature is off).
     ITextureView* white = st->white->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
     ITextureView* flat  = st->flatNormal->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
-    const GpuTexture* bound[kNumSlots] = { diffuse, normal, specular, glow, env, envMask, lightMap, backMap, height };
+    const GpuTexture* bound[kNumSlots] = { diffuse, normal, specular, glow, env, envMask, lightMap, backMap, height, palette, nullptr };
     for (std::size_t i = 0; i < kNumSlots; ++i) {
         if (!var.textures[i]) continue;
         ITextureView* view = bound[i] ? bound[i]->srv.RawPtr() : (i == 1 ? flat : white);
+        if (std::strcmp(kSlots[i].name, "g_SceneDepth") == 0) view = r.sceneDepthCopy->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
         var.textures[i]->Set(view);
     }
 
