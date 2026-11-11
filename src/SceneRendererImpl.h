@@ -70,12 +70,14 @@ struct FaceTintState;  // FaceTintPass.cpp
 struct OverlayState;   // Overlay.cpp
 struct PickState;      // PickPass.cpp
 struct WireState;      // WirePass.cpp
+struct ImageSpaceState; // ImageSpacePass.cpp
 void DestroyPbrState(PbrState* p);
 void DestroyLightingState(LightingState* p);
 void DestroyFaceTintState(FaceTintState* t);
 void DestroyOverlayState(OverlayState* o);
 void DestroyPickState(PickState* p);
 void DestroyWireState(WireState* p);
+void DestroyImageSpaceState(ImageSpaceState* p);
 // Owning pointers to the pass states, deleted in their own files.
 using PbrPtr      = std::unique_ptr<PbrState, decltype(&DestroyPbrState)>;
 using LightingPtr = std::unique_ptr<LightingState, decltype(&DestroyLightingState)>;
@@ -83,6 +85,7 @@ using FaceTintPtr = std::unique_ptr<FaceTintState, decltype(&DestroyFaceTintStat
 using OverlayPtr  = std::unique_ptr<OverlayState, decltype(&DestroyOverlayState)>;
 using PickPtr     = std::unique_ptr<PickState, decltype(&DestroyPickState)>;
 using WirePtr     = std::unique_ptr<WireState, decltype(&DestroyWireState)>;
+using ImageSpacePtr = std::unique_ptr<ImageSpaceState, decltype(&DestroyImageSpaceState)>;
 
 // The scene pass's depth format (the grid and the world overlays test against it).
 inline constexpr Diligent::TEXTURE_FORMAT kSceneDepthFormat = Diligent::TEX_FORMAT_D32_FLOAT;
@@ -157,6 +160,8 @@ struct DiligentSceneRenderer::Impl {
     OverlayPtr  overlay{ nullptr, &DestroyOverlayState };
     PickPtr     pick{ nullptr, &DestroyPickState };
     WirePtr     wire{ nullptr, &DestroyWireState };
+    ImageSpacePtr imageSpaceState{ nullptr, &DestroyImageSpaceState };
+    ImageSpace    imageSpace;
     std::vector<QueuedDraw> wireDraws;   // this frame's draws with a wireColor, drawn after the tone map
     std::vector<glm::mat4>  wireBones;
     std::vector<QueuedDraw> outlineDraws;   // and with an outlineColor
@@ -198,6 +203,11 @@ FaceTintPtr CreateFaceTintState(DiligentSceneRenderer::Impl& r);
 TextureHandle FaceTintComposite(DiligentSceneRenderer::Impl& r, TextureHandle base, std::span<const FaceTintLayer> layers);
 
 OverlayPtr CreateOverlayState(DiligentSceneRenderer::Impl& r);
+
+ImageSpacePtr CreateImageSpaceState(DiligentSceneRenderer::Impl& r);
+// The post pass with an image space: adaptation, bloom, tone and grade into the output. False when it could not run (the
+// plain post pass then does).
+bool ImageSpacePost(DiligentSceneRenderer::Impl& r, Diligent::ITextureView* outputRTV);
 
 WirePtr CreateWireState(DiligentSceneRenderer::Impl& r);
 void    WireRun(DiligentSceneRenderer::Impl& r, Diligent::ITextureView* outputRTV);   // EndFrame, after the grid: outlines, wireframe

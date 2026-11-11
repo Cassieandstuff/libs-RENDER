@@ -58,6 +58,7 @@ DiligentSceneRenderer::Impl::Impl(RenderDevice& dev)
     overlay = CreateOverlayState(*this);
     pick    = CreatePickState(*this);
     wire    = CreateWireState(*this);
+    imageSpaceState = CreateImageSpaceState(*this);
 }
 
 DiligentSceneRenderer::Impl::~Impl() {
@@ -161,6 +162,7 @@ DiligentSceneRenderer::Impl::PostPipeline& DiligentSceneRenderer::Impl::PostFor(
 }
 
 void DiligentSceneRenderer::Impl::RunPost(ITextureView* outputRTV) {
+    if (imageSpace.enabled && ImageSpacePost(*this, outputRTV)) return;
     PostPipeline& pp = PostFor(outputRTV->GetDesc().Format);
     if (!pp.pso) return;
     {
@@ -287,6 +289,7 @@ void             DiligentSceneRenderer::SetEnvironment(const SceneEnvironment& e
     m_impl->environment = environment;
     LightingBeginFrame(*m_impl);   // its frame constants are rewritten before the next draw
 }
+void             DiligentSceneRenderer::SetImageSpace(const ImageSpace& imageSpace) { m_impl->imageSpace = imageSpace; }
 void             DiligentSceneRenderer::SetViewStyle(const ViewStyle& style) { m_impl->style = style; }
 const ViewStyle& DiligentSceneRenderer::GetViewStyle() const { return m_impl->style; }
 FrameStats       DiligentSceneRenderer::LastFrameStats() const { return m_impl->lastStats; }

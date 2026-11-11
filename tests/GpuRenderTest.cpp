@@ -697,6 +697,117 @@ void TestLightingModel(RenderDevice& dev) {
     }
 }
 
+// ── 5c'''. Image space: adaptation, tone, grade, bloom ───────────────────────────
+// A Lighting quad lit to a known display value (0.7: linear 0.448), as in TestLightingModel.
+void TestImageSpace(RenderDevice& dev) {
+    std::printf("-- image space --\n");
+    PbrScene s(dev);
+    s.r.SetViewTransform(ViewTransform::Standard);
+    const MeshHandle quad = s.r.UploadMesh(MakeQuad());
+    DrawSurface lit;
+    lit.model            = MaterialModel::Lighting;
+    lit.specularStrength = 0.f;
+    auto env = [](float sun, float ambient) {
+        SceneEnvironment e;
+        e.sunDirection = { 0.f, 0.f, 1.f };
+        e.sunColor     = glm::vec3(sun);
+        for (auto& a : e.ambient) a = glm::vec3(0.f);
+        e.ambient[4] = glm::vec3(ambient);
+        return e;
+    };
+    auto shoot = [&](const ImageSpace& is, const SceneEnvironment& e, const DrawSurface& surface) {
+        s.r.SetImageSpace(is);
+        auto px = s.Render([&](auto& r) {
+            r.SetEnvironment(e);
+            r.DrawMesh(quad, glm::mat4(1.f), surface);
+        });
+        return std::pair{ s.At(px, glm::vec3(0.f)), px };
+    };
+    const SceneEnvironment seventy = env(0.5f, 0.2f), twenty = env(0.f, 0.2f);
+
+    ImageSpace off;
+    check("image space off leaves the frame as lit (0.7 -> 179)", Near(shoot(off, seventy, lit).first.r, 179, 3));
+    ImageSpace on;
+    on.enabled = true;
+    check("image space on with neutral settings is the identity", Near(shoot(on, seventy, lit).first.r, 179, 3));
+
+    // Adaptation at full strength brings the average (linear 0.448) to the key 0.18: display 0.461 -> 118.
+    ImageSpace adapt = on;
+    adapt.adaptStrength = 1.f;
+    adapt.adaptKey      = 0.18f;
+    adapt.minExposure   = 0.01f;
+    adapt.maxExposure   = 100.f;
+    Rgba p = shoot(adapt, seventy, lit).first;
+    std::printf("   adapted to key 0.18: %d (expected 118)\n", p.r);
+    check("eye adaptation brings the average luminance to the key", Near(p.r, 118, 4));
+    // A dim frame (0.2 display, linear 0.033) is brought up to the same key: the frame's own brightness doesn't matter.
+    p = shoot(adapt, twenty, lit).first;
+    check("a dim frame is exposed up to the same key", Near(p.r, 118, 4));
+    adapt.maxExposure = 2.f;
+    p = shoot(adapt, twenty, lit).first;
+    check("exposure stops at its clamp (0.033 x 2 -> 0.066 -> 72)", Near(p.r, 72, 4));
+    // Over time: with dt and speed it moves part of the way each frame.
+    ImageSpace slow = adapt;
+    slow.maxExposure  = 100.f;
+    slow.deltaSeconds = 1.f / 60.f;
+    slow.adaptSpeed   = 1.f;
+    shoot(on, seventy, lit);   // adapted to the bright frame (not used while off), then...
+    shoot(adapt, seventy, lit);
+    p = shoot(slow, twenty, lit).first;   // ...a dim frame: the adapted value is still near the bright one
+    check("adaptation takes time (a sudden dim frame first stays dim)", p.r < 100);
+
+    // Tone: white 2 compresses (0.448 -> 0.344 -> display 0.62 -> 158).
+    ImageSpace tone = on;
+    tone.white = 2.f;
+    check("the white point compresses highlights", Near(shoot(tone, seventy, lit).first.r, 158, 4));
+
+    // Grade.
+    ImageSpace grade = on;
+    grade.brightness = 2.f;
+    check("brightness multiplies display values (0.2 -> 0.4 -> 102)", Near(shoot(grade, twenty, lit).first.r, 102, 3));
+    grade            = on;
+    grade.contrast   = 2.f;
+    check("contrast spreads around mid-grey (0.7 -> 0.9 -> 230)", Near(shoot(grade, seventy, lit).first.r, 230, 3));
+    DrawSurface red  = lit;
+    red.tint         = { 1.f, 0.2f, 0.2f, 1.f };
+    grade            = on;
+    grade.saturation = 0.f;
+    p = shoot(grade, seventy, red).first;
+    check("saturation 0 is grey", Near(p.r, p.g, 2) && Near(p.g, p.b, 2));
+    grade            = on;
+    grade.tintColor  = { 1.f, 0.f, 0.f };
+    grade.tintAmount = 1.f;
+    p = shoot(grade, seventy, lit).first;
+    check("a full tint takes the tint colour times luminance", p.r > 150 && p.g < 5 && p.b < 5);
+
+    // Bloom: a small bright quad spreads light around it.
+    MeshData smallQ = MakeQuad(0.f);
+    for (auto& v : smallQ.positions) v *= 0.2f;
+    const MeshHandle spot = s.r.UploadMesh(smallQ);
+    DrawSurface glowing = lit;
+    glowing.lighting.ownEmit = true;
+    glowing.emissiveColor    = glm::vec3(1.f);
+    glowing.emissiveMultiple = 3.f;
+    ImageSpace bloom = on;
+    bloom.bloomThreshold = 0.5f;
+    bloom.bloomRadius    = 120.f;   // at 1080 lines: about 11 px on this 96 px frame
+    auto spotShot = [&](const ImageSpace& is) {
+        s.r.SetImageSpace(is);
+        auto px = s.Render([&](auto& r) {
+            r.SetEnvironment(env(0.f, 0.f));
+            r.DrawMesh(spot, glm::mat4(1.f), glowing);
+        });
+        return s.At(px, { 0.45f, 0.f, 0.f });   // beside the spot, on the background
+    };
+    bloom.bloomScale = 0.f;
+    const Rgba dark  = spotShot(bloom);
+    bloom.bloomScale = 1.f;
+    const Rgba glow  = spotShot(bloom);
+    std::printf("   beside a bright spot: no bloom %d, bloom %d\n", Lum(dark), Lum(glow));
+    check("bloom spreads light past a bright surface", Lum(glow) > Lum(dark) + 20);
+    s.r.SetImageSpace(off);
+}
+
 // ── 5c''. Picking: ids and depths read back from a rect ─────────────────────────
 void TestPick(RenderDevice& dev) {
     std::printf("-- picking --\n");
@@ -1617,6 +1728,7 @@ int main(int argc, char** argv) {
     TestPbr(*dev);
     TestDrawQueue(*dev);
     TestLightingModel(*dev);
+    TestImageSpace(*dev);
     TestPick(*dev);
     TestUpdateMesh(*dev);
     TestFrameOrder(*dev);

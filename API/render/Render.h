@@ -207,6 +207,37 @@ struct TerrainSurface {
 // ── Point lights ──────────────────────────────────────────────────────────────
 // A light placed in the world. `color` is linear radiance at a unit's distance
 // before the falloff; `radius` is where it reaches zero (world units).
+// ── Image space ───────────────────────────────────────────────────────────────
+// What happens between the lit frame and the screen, as a game's image space
+// describes it: eye adaptation (exposure follows the frame's average brightness),
+// a white point, bloom, and a cinematic grade. Off: the frame goes out as lit
+// (exposure × view transform), exactly as without it.
+struct ImageSpace {
+    bool  enabled = false;
+    // Eye adaptation. The frame's average luminance (linear, geometric mean over the
+    // geometry; the background doesn't count) is adapted towards over time; exposure
+    // = (adaptKey / adapted)^adaptStrength, clamped to [minExposure, maxExposure].
+    // Strength 0 keeps exposure 1; 1 brings the average to adaptKey.
+    float adaptStrength = 0.f;
+    float adaptKey      = 0.18f;   // linear luminance the average is brought towards
+    float adaptSpeed    = 10.f;    // per second: the adapted value closes 1 − e^(−speed·dt) of the gap each frame
+    float minExposure   = 0.25f, maxExposure = 4.f;
+    float deltaSeconds  = 0.f;     // since the last frame; 0 adapts at once (stills, tests)
+    // Tone: c·(1 + c/white²)/(1 + c) per channel; white 1 is the identity (then clipped).
+    float white = 1.f;
+    // Bloom: what is brighter than the threshold (a display value, after exposure)
+    // spreads `radius` pixels (at 1080 lines; scaled to the frame's height) and adds
+    // back × scale. Scale 0 = none.
+    float bloomThreshold = 1.f;
+    float bloomScale     = 0.f;
+    float bloomRadius    = 8.f;
+    // Cinematic grade, on display values: saturation (0 = grey), brightness (×),
+    // contrast (around mid-grey), then a tint towards tintColor × luminance by tintAmount.
+    float     saturation = 1.f, brightness = 1.f, contrast = 1.f;
+    glm::vec3 tintColor  = { 1.f, 1.f, 1.f };
+    float     tintAmount = 0.f;
+};
+
 // ── Picking ───────────────────────────────────────────────────────────────────
 // One surface a pick found: the nearest pixel of it inside the picked rect.
 struct PickHit {
@@ -480,6 +511,10 @@ struct ISceneRenderer {
     // The Lighting model's light for this frame (see SceneEnvironment). Optional,
     // with a default, so renderers without the model build unchanged.
     virtual void SetEnvironment(const SceneEnvironment& environment)          { (void)environment; }
+
+    // The frame's image space (see ImageSpace); set before EndFrame. Optional, with a
+    // default, so renderers without it build unchanged.
+    virtual void SetImageSpace(const ImageSpace& imageSpace)                  { (void)imageSpace; }
 
     virtual void DrawGrid(float cellSize = 1.f, int halfExtent = 10)          = 0;
 

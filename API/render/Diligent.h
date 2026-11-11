@@ -270,6 +270,7 @@ public:
     void SetLight(const glm::vec3& dir, const glm::vec3& color, const glm::vec3& ambient) override;
     void SetPointLights(std::span<const PointLight> lights) override;
     void SetEnvironment(const SceneEnvironment& environment) override;
+    void SetImageSpace(const ImageSpace& imageSpace) override;
     // The infinite ground grid (Z = 0), drawn at EndFrame over the tone-mapped image
     // and depth-tested against the scene: minor lines every `cellSize`, fading out
     // `cellSize * halfExtent` from the camera.
