@@ -777,6 +777,253 @@ void TestEffectModel(RenderDevice& dev) {
     check("with soft depth it fades where it meets the surface behind", softly.b > 150 && softly.r < 120);
 }
 
+// ── 5d. Image passes: targets (R6), passes from caller HLSL (R5), readback with mips (R9) ──
+bool NearF(float a, float b, float tol) { return std::fabs(a - b) <= tol; }
+const float* Texel(const TargetImage& im, int x, int y) { return im.rgba.data() + (static_cast<size_t>(y) * im.width + x) * 4; }
+bool TexelIs(const TargetImage& im, int x, int y, glm::vec4 v, float tol) {
+    const float* t = Texel(im, x, y);
+    return NearF(t[0], v.r, tol) && NearF(t[1], v.g, tol) && NearF(t[2], v.b, tol) && NearF(t[3], v.a, tol);
+}
+
+constexpr const char* kUvPS = R"(float4 main(float4 pos : SV_Position, float2 uv : TEXCOORD0) : SV_Target
+{
+    return float4(uv, uv.x * uv.y, 1.0);
+}
+)";
+
+// Line 3 names something undeclared.
+constexpr const char* kBrokenPS = R"(float4 main(float4 pos : SV_Position, float2 uv : TEXCOORD0) : SV_Target
+{
+    return undeclared_thing;
+}
+)";
+
+// Each texel column shows one constant, so every packing case reads back on its own.
+constexpr const char* kConstantsPS = R"(cbuffer Params
+{
+    float  g_f;
+    float3 g_v3;
+    float  g_arr[3];
+    float4 g_cols[2];
+    int4   g_i4;
+    int    g_iarr[2];
+};
+float4 main(float4 pos : SV_Position, float2 uv : TEXCOORD0) : SV_Target
+{
+    int x = int(pos.x);
+    if (x == 0) return float4(g_f, g_v3);
+    if (x == 1) return float4(g_arr[0], g_arr[1], g_arr[2], 0.0);
+    if (x == 2) return g_cols[0];
+    if (x == 3) return g_cols[1];
+    if (x == 4) return float4(g_i4);
+    return float4(g_iarr[0], g_iarr[1], 0.0, 0.0);
+}
+)";
+
+// Samples g_In at this texel's uv, × 2.
+constexpr const char* kSamplePS = R"(Texture2D g_In;
+SamplerState g_Smp;
+float4 main(float4 pos : SV_Position, float2 uv : TEXCOORD0) : SV_Target
+{
+    return g_In.SampleLevel(g_Smp, uv, 0.0) * 2.0;
+}
+)";
+
+void TestImagePasses(RenderDevice& dev) {
+    std::printf("-- image passes --\n");
+    DiligentSceneRenderer r(dev);   // headless: no output target bound
+    IImageRenderer* img = r.Images();
+    check("the renderer has image passes", img != nullptr);
+    if (!img) return;
+    std::string err;
+
+    // R6: every format clears and reads back as stored. Floats keep values past 0..1; RGBA8 is linear (0.5 -> 128,
+    // where sRGB would store 188); a format without G, B or A reads them as 0, 0, 1.
+    struct Fmt { TargetFormat f; const char* name; int channels; float tol; };
+    const Fmt fmts[] = { { TargetFormat::R16F, "R16F", 1, 2e-3f },  { TargetFormat::RG16F, "RG16F", 2, 2e-3f },
+                         { TargetFormat::RGBA16F, "RGBA16F", 4, 2e-3f }, { TargetFormat::R32F, "R32F", 1, 1e-6f },
+                         { TargetFormat::RG32F, "RG32F", 2, 1e-6f },  { TargetFormat::RGBA32F, "RGBA32F", 4, 1e-6f },
+                         { TargetFormat::RGBA8, "RGBA8", 4, 1.f / 255.f } };
+    for (const Fmt& f : fmts) {
+        const bool          unorm = f.f == TargetFormat::RGBA8;
+        const glm::vec4     value = unorm ? glm::vec4(0.5f, 0.25f, 1.f, 0.f) : glm::vec4(2.5f, -1.f, 0.333f, 3.f);
+        const TextureHandle t     = img->CreateTarget({ 4, 4, f.f, 1 }, &err);
+        bool ok = t != TextureHandle::Invalid && img->ClearTarget(t, value, -1, &err);
+        const TargetImage im = img->ReadTarget(t);
+        ok = ok && im.ok && im.width == 4 && im.height == 4;
+        glm::vec4 want(0.f, 0.f, 0.f, 1.f);
+        for (int c = 0; c < f.channels; ++c) want[c] = value[c];
+        for (int y = 0; ok && y < 4; ++y)
+            for (int x = 0; ok && x < 4; ++x) ok = TexelIs(im, x, y, want, f.tol);
+        if (!ok && im.ok) {
+            const float* p = Texel(im, 0, 0);
+            std::printf("   %s read (%g, %g, %g, %g)%s%s\n", f.name, p[0], p[1], p[2], p[3], err.empty() ? "" : ": ", err.c_str());
+        }
+        check((std::string("a ") + f.name + " target clears and reads back as stored").c_str(), ok);
+        r.FreeTexture(t);
+    }
+    check("a 0x4 target is refused, with a reason",
+          img->CreateTarget({ 0, 4, TargetFormat::RGBA16F, 1 }, &err) == TextureHandle::Invalid && !err.empty());
+
+    // R5: uv is 0..1 over the target, origin top-left: the first row read back is v = 1/8 (4 rows), u = 1/16 (8 columns).
+    PassDesc uvDesc;
+    uvDesc.name        = "uv";
+    uvDesc.pixelShader = kUvPS;
+    uvDesc.format      = TargetFormat::RGBA32F;
+    const PassResult uv = img->CreatePass(uvDesc);
+    if (!uv.messages.empty()) std::printf("%s\n", uv.messages.c_str());
+    check("a pass compiles from caller HLSL", uv.pass != PassHandle::Invalid);
+    const TextureHandle uvTarget = img->CreateTarget({ 8, 4, TargetFormat::RGBA32F, 1 }, &err);
+    check("it runs into a target", img->RunPass(uv.pass, uvTarget, 0, &err));
+    if (!err.empty()) std::printf("   %s\n", err.c_str());
+    TargetImage im = img->ReadTarget(uvTarget);
+    check("uv at the texel centres, top row first",
+          im.ok && TexelIs(im, 0, 0, { 1.f / 16, 1.f / 8, 1.f / 128, 1.f }, 1e-4f) &&
+              TexelIs(im, 7, 3, { 15.f / 16, 7.f / 8, 105.f / 128, 1.f }, 1e-4f));
+    check("a pass refuses a target of another format",
+          !img->RunPass(uv.pass, img->CreateTarget({ 8, 4, TargetFormat::RGBA16F, 1 }), 0, &err) && !err.empty());
+
+    // Compile errors come back as text, under the pass's name, with the caller's line numbers.
+    PassDesc brokenDesc;
+    brokenDesc.name        = "broken";
+    brokenDesc.pixelShader = kBrokenPS;
+    const PassResult broken = img->CreatePass(brokenDesc);
+    std::printf("   broken: %s\n", broken.messages.c_str());
+    check("a shader that doesn't compile gives no pass", broken.pass == PassHandle::Invalid);
+    check("its messages start with the pass's name", broken.messages.rfind("pass 'broken':", 0) == 0);
+    check("they name line 3 of the caller's source",
+          broken.messages.find(":3:") != std::string::npos || broken.messages.find("(3,") != std::string::npos);
+
+    // Constants by name, packed by HLSL's rules: a float and a float3 sharing a register, a float[3] and an int[2] on
+    // 16-byte strides, a float4[2] (a gradient's colours), an int4.
+    PassDesc cDesc;
+    cDesc.name        = "constants";
+    cDesc.pixelShader = kConstantsPS;
+    cDesc.format      = TargetFormat::RGBA32F;
+    const PassResult cp = img->CreatePass(cDesc);
+    if (!cp.messages.empty()) std::printf("%s\n", cp.messages.c_str());
+    check("a pass with constants compiles", cp.pass != PassHandle::Invalid);
+    const PassInfo info = img->Describe(cp.pass);
+    auto described = [&](const char* name, bool isInt, int comps, int array) {
+        for (const PassConstant& c : info.constants)
+            if (c.name == name) return c.isInt == isInt && c.components == comps && c.arraySize == array;
+        return false;
+    };
+    check("Describe lists its constants with their shapes",
+          described("g_f", false, 1, 0) && described("g_v3", false, 3, 0) && described("g_arr", false, 1, 3) &&
+              described("g_cols", false, 4, 2) && described("g_i4", true, 4, 0) && described("g_iarr", true, 1, 2));
+    bool set = img->SetConstant(cp.pass, "g_f", std::vector<float>{ 1.5f }, &err);
+    set = set && img->SetConstant(cp.pass, "g_v3", std::vector<float>{ 2.f, 3.f, 4.f }, &err);
+    set = set && img->SetConstant(cp.pass, "g_arr", std::vector<float>{ 5.f, 6.f, 7.f }, &err);
+    set = set && img->SetConstant(cp.pass, "g_cols", std::vector<float>{ 8.f, 9.f, 10.f, 11.f, 12.f, 13.f, 14.f, 15.f }, &err);
+    set = set && img->SetConstant(cp.pass, "g_i4", std::vector<std::int32_t>{ 16, 17, 18, -19 }, &err);
+    set = set && img->SetConstant(cp.pass, "g_iarr", std::vector<std::int32_t>{ 20, 21 }, &err);
+    if (!set) std::printf("   %s\n", err.c_str());
+    check("every constant sets by name", set);
+    const TextureHandle cTarget = img->CreateTarget({ 6, 1, TargetFormat::RGBA32F, 1 });
+    img->RunPass(cp.pass, cTarget, 0, &err);
+    im = img->ReadTarget(cTarget);
+    check("a float and a float3 reach the shader", im.ok && TexelIs(im, 0, 0, { 1.5f, 2.f, 3.f, 4.f }, 0.f));
+    check("a float[3] does, on 16-byte strides", im.ok && TexelIs(im, 1, 0, { 5.f, 6.f, 7.f, 0.f }, 0.f));
+    check("a float4[2] does", im.ok && TexelIs(im, 2, 0, { 8.f, 9.f, 10.f, 11.f }, 0.f) && TexelIs(im, 3, 0, { 12.f, 13.f, 14.f, 15.f }, 0.f));
+    check("an int4 and an int[2] do", im.ok && TexelIs(im, 4, 0, { 16.f, 17.f, 18.f, -19.f }, 0.f) && TexelIs(im, 5, 0, { 20.f, 21.f, 0.f, 0.f }, 0.f));
+    if (im.ok) {
+        for (int x = 0; x < 6; ++x) {
+            const float* p = Texel(im, x, 0);
+            std::printf("   column %d: (%g, %g, %g, %g)\n", x, p[0], p[1], p[2], p[3]);
+        }
+    }
+    err.clear();
+    check("an unknown constant is refused, naming the pass",
+          !img->SetConstant(cp.pass, "nope", std::vector<float>{ 1.f }, &err) && err.find("constants") != std::string::npos);
+    check("a wrong count is refused", !img->SetConstant(cp.pass, "g_v3", std::vector<float>{ 1.f, 2.f }, &err));
+    check("floats for an int constant are refused", !img->SetConstant(cp.pass, "g_i4", std::vector<float>{ 1.f, 2.f, 3.f, 4.f }, &err));
+
+    // Chaining: a second pass samples the first's target (Linear + Wrap by default) and doubles it.
+    PassDesc uv16 = uvDesc;
+    uv16.name     = "uv16";
+    uv16.format   = TargetFormat::RGBA16F;
+    const PassHandle uvPass16 = img->CreatePass(uv16).pass;
+    PassDesc sDesc;
+    sDesc.name        = "sample";
+    sDesc.pixelShader = kSamplePS;
+    const PassResult sp = img->CreatePass(sDesc);
+    if (!sp.messages.empty()) std::printf("%s\n", sp.messages.c_str());
+    const TextureHandle a = img->CreateTarget({ 4, 4, TargetFormat::RGBA16F, 1 });
+    const TextureHandle b = img->CreateTarget({ 4, 4, TargetFormat::RGBA16F, 1 });
+    img->RunPass(uvPass16, a);
+    err.clear();
+    check("an unbound texture stops a run", !img->RunPass(sp.pass, b, 0, &err) && err.find("not bound") != std::string::npos);
+    img->SetTexture(sp.pass, "g_In", a, &err);
+    check("a pass samples another's target", img->RunPass(sp.pass, b, 0, &err));
+    im = img->ReadTarget(b);
+    check("and reads its values (2 x uv)", im.ok && TexelIs(im, 1, 2, { 2.f * 3 / 8, 2.f * 5 / 8, 2.f * 15 / 64, 2.f }, 4e-3f));
+    img->SetTexture(sp.pass, "g_In", b);
+    check("a pass may not sample its own output", !img->RunPass(sp.pass, b, 0, &err) && !err.empty());
+    const TextureHandle gone = img->CreateTarget({ 4, 4, TargetFormat::RGBA16F, 1 });
+    img->SetTexture(sp.pass, "g_In", gone);
+    r.FreeTexture(gone);
+    err.clear();
+    check("a freed texture stops a run", !img->RunPass(sp.pass, b, 0, &err) && err.find("freed") != std::string::npos);
+
+    // Samplers by name. A 2x1 source (0.25 | 0.75) sampled at a 4x1 target's centres (u = 1/8, 3/8, ... 7/8), then
+    // doubled: Linear + Wrap reads 0.375 at u = 1/8 (blending across the wrap) and at 3/8, so 0.75; Point + Clamp reads
+    // 0.25 at both (0.5) and 0.75 at 7/8 (1.5).
+    const TextureHandle src = img->CreateTarget({ 2, 1, TargetFormat::RGBA16F, 1 });
+    const TextureHandle dst = img->CreateTarget({ 4, 1, TargetFormat::RGBA16F, 1 });
+    img->RunPass(uvPass16, src);
+    img->SetTexture(sp.pass, "g_In", src);
+    img->RunPass(sp.pass, dst);
+    im = img->ReadTarget(dst);
+    check("an unlisted sampler is Linear + Wrap", im.ok && NearF(Texel(im, 0, 0)[0], 0.75f, 4e-3f) && NearF(Texel(im, 1, 0)[0], 0.75f, 4e-3f));
+    PassDesc pointDesc = sDesc;
+    pointDesc.name     = "sample point";
+    pointDesc.samplers = { { "g_Smp", SamplerFilter::Point, SamplerAddress::Clamp } };
+    const PassHandle pointPass = img->CreatePass(pointDesc).pass;
+    img->SetTexture(pointPass, "g_In", src);
+    img->RunPass(pointPass, dst);
+    im = img->ReadTarget(dst);
+    check("a listed sampler takes its settings (Point + Clamp)",
+          im.ok && NearF(Texel(im, 0, 0)[0], 0.5f, 4e-3f) && NearF(Texel(im, 1, 0)[0], 0.5f, 4e-3f) && NearF(Texel(im, 3, 0)[0], 1.5f, 4e-3f));
+
+    // R9: mips. 8x8 of (u, v, u·v): a box-filtered chain averages to (0.5, 0.5, 0.25) at 1x1.
+    const TextureHandle chain = img->CreateTarget({ 8, 8, TargetFormat::RGBA16F, 0 });
+    img->RunPass(uvPass16, chain);
+    check("mips generate", img->GenerateMips(chain, &err));
+    const TargetRead reads[] = { { chain, 3 }, { chain, 9 }, { chain, 1 } };
+    const std::vector<TargetImage> batch = img->ReadTargets(reads);
+    check("a batched read answers each request", batch.size() == 3);
+    if (batch.size() == 3) {
+        check("level 3 is 1x1, the average", batch[0].ok && batch[0].width == 1 && TexelIs(batch[0], 0, 0, { 0.5f, 0.5f, 0.25f, 1.f }, 3e-3f));
+        check("a level the target lacks fails alone, with a reason", !batch[1].ok && !batch[1].error.empty());
+        check("level 1 is 4x4", batch[2].ok && batch[2].width == 4 && batch[2].height == 4 && TexelIs(batch[2], 0, 0, { 0.125f, 0.125f, 0.015625f, 1.f }, 3e-3f));
+    }
+    check("a texture that isn't a target doesn't read", !img->ReadTarget(r.UploadBlendMap(std::vector<float>(33 * 33, 0.5f).data())).ok);
+
+    img->FreePass(uv.pass);
+    check("a freed pass doesn't run", !img->RunPass(uv.pass, uvTarget));
+
+    // A target as a DrawSurface texture: an Effect quad shows a linear RGBA16F target's values as they are.
+    PbrScene s(dev);
+    s.r.SetViewTransform(ViewTransform::Standard);
+    const MeshHandle    quad = s.r.UploadMesh(MakeQuad(0.f));
+    const TextureHandle tex  = s.r.CreateTarget({ 4, 4, TargetFormat::RGBA16F, 1 });
+    s.r.ClearTarget(tex, { 0.5f, 0.25f, 1.f, 1.f });
+    SceneEnvironment dark;
+    dark.sunColor = glm::vec3(0.f);
+    for (auto& amb : dark.ambient) amb = glm::vec3(0.f);
+    DrawSurface fx;
+    fx.model   = MaterialModel::Effect;
+    fx.diffuse = tex;
+    const Rgba p = s.At(s.Render([&](auto& rr) {
+        rr.SetEnvironment(dark);
+        rr.DrawMesh(quad, glm::mat4(1.f), fx);
+    }), glm::vec3(0.f));
+    std::printf("   target as an effect's texture: (%d, %d, %d)\n", p.r, p.g, p.b);
+    check("DrawSurface samples a target's values as stored (0.5, 0.25, 1 -> 128, 64, 255)",
+          Near(p.r, 128, 3) && Near(p.g, 64, 3) && p.b >= 252);
+}
+
 // ── 5c'''. Image space: adaptation, tone, grade, bloom ───────────────────────────
 // A Lighting quad lit to a known display value (0.7: linear 0.448), as in TestLightingModel.
 void TestImageSpace(RenderDevice& dev) {
@@ -1809,6 +2056,7 @@ int main(int argc, char** argv) {
     TestDrawQueue(*dev);
     TestLightingModel(*dev);
     TestEffectModel(*dev);
+    TestImagePasses(*dev);
     TestImageSpace(*dev);
     TestPick(*dev);
     TestUpdateMesh(*dev);

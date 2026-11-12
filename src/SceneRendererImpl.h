@@ -6,6 +6,7 @@
 //   Textures.cpp       texture loading, blend maps, views, readback
 //   PbrPass.cpp        DiligentFX PBR_Renderer: IBL, PSO caches, SRBs, mesh draws
 //   FaceTintPass.cpp   the face-tint composite
+//   ImagePass.cpp      IImageRenderer: targets, passes from caller HLSL, float readback
 //   Queue.cpp          the frame's mesh draws, sorted and drawn at EndFrame
 #include "Internal.h"
 
@@ -62,6 +63,10 @@ struct GpuTexture {
     bool srgb = false;
     bool cube = false;       // a cube map (6 faces)
     bool rendered = false;   // produced on the GPU (face tint) — readable via DebugReadbackRGBA8
+    // An image-pass target (CreateTarget): rendered into, cleared, read back as floats.
+    bool         target = false;
+    TargetFormat targetFormat = TargetFormat::RGBA16F;
+    std::vector<RefCntAutoPtr<Diligent::ITextureView>> mipRtvs;   // per level, created on first use
 };
 
 struct PbrState;       // PbrPass.cpp
@@ -71,7 +76,9 @@ struct OverlayState;   // Overlay.cpp
 struct PickState;      // PickPass.cpp
 struct WireState;      // WirePass.cpp
 struct ImageSpaceState; // ImageSpacePass.cpp
+struct ImagePassState;  // ImagePass.cpp
 void DestroyPbrState(PbrState* p);
+void DestroyImagePassState(ImagePassState* p);
 void DestroyLightingState(LightingState* p);
 void DestroyFaceTintState(FaceTintState* t);
 void DestroyOverlayState(OverlayState* o);
@@ -86,6 +93,7 @@ using OverlayPtr  = std::unique_ptr<OverlayState, decltype(&DestroyOverlayState)
 using PickPtr     = std::unique_ptr<PickState, decltype(&DestroyPickState)>;
 using WirePtr     = std::unique_ptr<WireState, decltype(&DestroyWireState)>;
 using ImageSpacePtr = std::unique_ptr<ImageSpaceState, decltype(&DestroyImageSpaceState)>;
+using ImagePassPtr  = std::unique_ptr<ImagePassState, decltype(&DestroyImagePassState)>;
 
 // The scene pass's depth format (the grid and the world overlays test against it).
 inline constexpr Diligent::TEXTURE_FORMAT kSceneDepthFormat = Diligent::TEX_FORMAT_D32_FLOAT;
@@ -162,6 +170,7 @@ struct DiligentSceneRenderer::Impl {
     WirePtr     wire{ nullptr, &DestroyWireState };
     ImageSpacePtr imageSpaceState{ nullptr, &DestroyImageSpaceState };
     ImageSpace    imageSpace;
+    ImagePassPtr  imagePasses{ nullptr, &DestroyImagePassState };   // IImageRenderer: passes from caller HLSL
     std::vector<QueuedDraw> wireDraws;   // this frame's draws with a wireColor, drawn after the tone map
     std::vector<glm::mat4>  wireBones;
     std::vector<QueuedDraw> outlineDraws;   // and with an outlineColor
@@ -214,6 +223,8 @@ bool ImageSpacePost(DiligentSceneRenderer::Impl& r, Diligent::ITextureView* outp
 
 WirePtr CreateWireState(DiligentSceneRenderer::Impl& r);
 void    WireRun(DiligentSceneRenderer::Impl& r, Diligent::ITextureView* outputRTV);   // EndFrame, after the grid: outlines, wireframe
+
+ImagePassPtr CreateImagePassState(DiligentSceneRenderer::Impl& r);
 
 PickPtr CreatePickState(DiligentSceneRenderer::Impl& r);
 void    PickRun(DiligentSceneRenderer::Impl& r);   // EndFrame, after the flush: draws pickDraws and reads the rect back

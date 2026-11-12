@@ -59,6 +59,7 @@ DiligentSceneRenderer::Impl::Impl(RenderDevice& dev)
     pick    = CreatePickState(*this);
     wire    = CreateWireState(*this);
     imageSpaceState = CreateImageSpaceState(*this);
+    imagePasses     = CreateImagePassState(*this);
 }
 
 DiligentSceneRenderer::Impl::~Impl() {

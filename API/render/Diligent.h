@@ -12,7 +12,8 @@
 //                         (DiligentFX PBR for meshes), face-tint composite, an
 //                         ACES tone-map into whichever output target is bound,
 //                         then the grid and the overlays (lines, triangles,
-//                         text, bones) over the tone-mapped image
+//                         text, bones) over the tone-mapped image; and image
+//                         passes (IImageRenderer: targets, caller HLSL, readback)
 //
 // No Diligent type crosses this header (pimpl throughout), so consumers need
 // neither Diligent's include paths nor its macros.
@@ -200,7 +201,7 @@ struct GlyphAtlas {
 //              stay in range keeps its dark colours.
 enum class ViewTransform { Filmic, Standard };
 
-class DiligentSceneRenderer final : public ISceneRenderer, public IOverlayRenderer {
+class DiligentSceneRenderer final : public ISceneRenderer, public IOverlayRenderer, public IImageRenderer {
 public:
     explicit DiligentSceneRenderer(RenderDevice& device);
     ~DiligentSceneRenderer() override;
@@ -243,6 +244,23 @@ public:
     void SetSkeletonStyle(const SkeletonStyle& style) override;
     void DrawBones(std::span<const glm::vec3> joints, std::span<const int> parents,
                    const glm::mat4& world = glm::mat4(1.f)) override;
+
+    // ── IImageRenderer (see <render/Render.h>) ──
+    IImageRenderer* Images() override { return this; }
+    TextureHandle CreateTarget(const TargetDesc& desc, std::string* error = nullptr) override;
+    bool ClearTarget(TextureHandle target, const glm::vec4& value, int mip = -1, std::string* error = nullptr) override;
+    bool GenerateMips(TextureHandle target, std::string* error = nullptr) override;
+    PassResult CreatePass(const PassDesc& desc) override;
+    void       FreePass(PassHandle pass) override;
+    PassInfo   Describe(PassHandle pass) const override;
+    bool SetConstant(PassHandle pass, std::string_view name, std::span<const float> values,
+                     std::string* error = nullptr) override;
+    bool SetConstant(PassHandle pass, std::string_view name, std::span<const std::int32_t> values,
+                     std::string* error = nullptr) override;
+    bool SetTexture(PassHandle pass, std::string_view name, TextureHandle texture, std::string* error = nullptr) override;
+    bool RunPass(PassHandle pass, TextureHandle target, int mip = 0, std::string* error = nullptr) override;
+    std::vector<TargetImage> ReadTargets(std::span<const TargetRead> reads) override;
+    using IImageRenderer::ReadTarget;
 
     // CPU copy of a texture this renderer produced on the GPU (CompositeFaceTint
     // results): RGBA8 sRGB-encoded, rows top to bottom. False for other textures.
