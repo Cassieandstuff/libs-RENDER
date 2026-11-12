@@ -1024,6 +1024,52 @@ void TestImagePasses(RenderDevice& dev) {
           Near(p.r, 128, 3) && Near(p.g, 64, 3) && p.b >= 252);
 }
 
+// A long run with no frame drawn: 5000 passes ping-ponging between two targets, each sampling the other (a dynamic
+// texture binding) and setting a constant (a cbuffer upload), with no readback until the end. Direct3D 12 hands back the
+// dynamic descriptors those take only at a frame's end: without image work ending frames itself, its heap ran out after
+// ~1200 (bk-material's node outputs).
+constexpr const char* kAccumulatePS = R"(Texture2D g_Prev;
+cbuffer Step
+{
+    float g_step;
+};
+float4 main(float4 pos : SV_Position, float2 uv : TEXCOORD0) : SV_Target
+{
+    return g_Prev.Load(int3(int2(pos.xy), 0)) + g_step;
+}
+)";
+
+void TestImagePassMarathon(RenderDevice& dev) {
+    std::printf("-- image passes: 5000 with no frame --\n");
+    DiligentSceneRenderer r(dev);
+    IImageRenderer& img = *r.Images();
+    PassDesc desc;
+    desc.name        = "accumulate";
+    desc.pixelShader = kAccumulatePS;
+    desc.format      = TargetFormat::RGBA32F;
+    const PassResult pass = img.CreatePass(desc);
+    if (!pass.messages.empty()) std::printf("%s\n", pass.messages.c_str());
+    check("the accumulating pass compiles", pass.pass != PassHandle::Invalid);
+    const TextureHandle t[2] = { img.CreateTarget({ 1, 1, TargetFormat::RGBA32F, 1 }), img.CreateTarget({ 1, 1, TargetFormat::RGBA32F, 1 }) };
+    img.ClearTarget(t[0], glm::vec4(0.f));
+    constexpr int kRuns = 5000;
+    const std::vector<float> step{ 1.f };
+    int failed = 0;
+    std::string err;
+    const auto start = std::chrono::steady_clock::now();
+    for (int i = 0; i < kRuns; ++i) {
+        const TextureHandle from = t[i % 2], to = t[(i + 1) % 2];
+        const bool ok = img.SetTexture(pass.pass, "g_Prev", from, &err) && img.SetConstant(pass.pass, "g_step", step, &err) &&
+                        img.RunPass(pass.pass, to, 0, &err);
+        if (!ok && failed++ == 0) std::printf("   run %d: %s\n", i, err.c_str());
+    }
+    const TargetImage im = img.ReadTarget(t[kRuns % 2]);
+    const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    std::printf("   %d runs in %.2f s, %d failed; result %g\n", kRuns, seconds, failed, im.ok ? im.rgba[0] : -1.f);
+    check("5000 passes run with no frame drawn", failed == 0);
+    check("and each one counted (the sum is 5000)", im.ok && im.rgba[0] == static_cast<float>(kRuns));
+}
+
 // ── 5c'''. Image space: adaptation, tone, grade, bloom ───────────────────────────
 // A Lighting quad lit to a known display value (0.7: linear 0.448), as in TestLightingModel.
 void TestImageSpace(RenderDevice& dev) {
@@ -2057,6 +2103,7 @@ int main(int argc, char** argv) {
     TestLightingModel(*dev);
     TestEffectModel(*dev);
     TestImagePasses(*dev);
+    TestImagePassMarathon(*dev);
     TestImageSpace(*dev);
     TestPick(*dev);
     TestUpdateMesh(*dev);
