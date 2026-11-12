@@ -155,6 +155,7 @@ struct ImagePassState {
     RefCntAutoPtr<IShader>                       vs;
     std::unordered_map<std::uint32_t, ImagePass> passes;
     std::uint32_t                                nextPass = 1;   // never reused
+    int                                          workSinceFrame = 0;   // runs, clears and mip builds since a frame ended
 };
 
 void DestroyImagePassState(ImagePassState* p) { delete p; }
@@ -202,6 +203,23 @@ int Levels(const GpuTexture& t) { return static_cast<int>(t.texture->GetDesc().M
 void Unbind(DiligentSceneRenderer::Impl& r) {
     r.context->SetRenderTargets(0, nullptr, nullptr, RESOURCE_STATE_TRANSITION_MODE_NONE);
     if (r.inFrame) r.BindSceneTargets();
+}
+
+// Image work outside a frame never reaches the end of one, and Diligent hands back what a context allocates per draw
+// only there: on Direct3D 12 the dynamic GPU descriptors every run takes (and UpdateBuffer's upload space), whose heap
+// runs out after some thousand runs. So, outside a frame, image work ends one itself every kWorkPerFrame steps, and
+// after each readback (the GPU is idle then anyway). Inside a frame, the frame's own end does it.
+constexpr int kWorkPerFrame = 64;
+
+void EndImageFrame(DiligentSceneRenderer::Impl& r) {
+    r.context->Flush();   // FinishFrame expects no outstanding commands
+    r.context->FinishFrame();
+    if (r.imagePasses) r.imagePasses->workSinceFrame = 0;
+}
+
+void CountWork(DiligentSceneRenderer::Impl& r) {
+    if (r.inFrame || !r.imagePasses) return;
+    if (++r.imagePasses->workSinceFrame >= kWorkPerFrame) EndImageFrame(r);
 }
 
 SamplerDesc ToSampler(const PassSampler* s) {
@@ -275,6 +293,7 @@ bool DiligentSceneRenderer::ClearTarget(TextureHandle target, const glm::vec4& v
         r.context->ClearRenderTarget(rtv, rgba, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     }
     Unbind(r);
+    CountWork(r);
     return true;
 }
 
@@ -284,6 +303,7 @@ bool DiligentSceneRenderer::GenerateMips(TextureHandle target, std::string* erro
     if (!t || !t->target) return Fail(error, "mips: not a target");
     if (Levels(*t) < 2) return true;   // nothing below level 0
     r.context->GenerateMips(t->texture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE));
+    CountWork(r);
     return true;
 }
 
@@ -550,6 +570,7 @@ bool DiligentSceneRenderer::RunPass(PassHandle handle, TextureHandle target, int
     DrawAttribs draw{ 3, DRAW_FLAG_VERIFY_ALL };
     r.context->Draw(draw);
     Unbind(r);
+    CountWork(r);
     return true;
 }
 
@@ -641,6 +662,7 @@ std::vector<TargetImage> DiligentSceneRenderer::ReadTargets(std::span<const Targ
         r.context->UnmapTextureSubresource(p.staging, 0, 0);
         img.ok = true;
     }
+    if (!r.inFrame) EndImageFrame(r);   // the GPU is idle: hand back what the work since the last frame end took
     return images;
 }
 

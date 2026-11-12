@@ -448,7 +448,10 @@ struct IOverlayRenderer {
 //
 // Everything runs at once, in call order, on the renderer's thread, outside
 // BeginFrame..EndFrame; frames drawn afterwards see the results. A renderer with no
-// output target bound runs them (headless use).
+// output target bound runs them (headless use): image work ends the device's frame
+// itself every few dozen steps and after each readback, so a long run of passes
+// with no frame drawn never exhausts what a frame hands back. (So image calls
+// mustn't fall inside another renderer's BeginFrame..EndFrame on the same device.)
 
 enum class PassHandle : std::uint32_t { Invalid = 0 };
 
