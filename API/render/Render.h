@@ -441,6 +441,154 @@ struct IOverlayRenderer {
                            const glm::mat4& world = glm::mat4(1.f)) = 0;
 };
 
+// ── Image passes ──────────────────────────────────────────────────────────────
+// Fullscreen passes from caller-supplied HLSL, rendered into persistent targets that
+// later passes and DrawSurface sample, and read back as floats (a node graph's images:
+// procedural textures, thumbnails, export). Reached through ISceneRenderer::Images().
+//
+// Everything runs at once, in call order, on the renderer's thread, outside
+// BeginFrame..EndFrame; frames drawn afterwards see the results. A renderer with no
+// output target bound runs them (headless use).
+
+enum class PassHandle : std::uint32_t { Invalid = 0 };
+
+// A target's texel format. Float formats store what a pass writes (beyond 0..1,
+// negative); RGBA8 is linear UNORM (0..1, no sRGB encoding either way).
+enum class TargetFormat : std::uint8_t { R16F, RG16F, RGBA16F, R32F, RG32F, RGBA32F, RGBA8 };
+
+struct TargetDesc {
+    int          width  = 0, height = 0;   // texels, 1..16384
+    TargetFormat format = TargetFormat::RGBA16F;
+    int          mipLevels = 1;            // 0 = the full chain down to 1×1
+};
+
+enum class SamplerFilter  : std::uint8_t { Linear, Point };
+enum class SamplerAddress : std::uint8_t { Wrap, Clamp, Mirror };
+
+// The settings of a SamplerState the pass's shader declares, by its name.
+struct PassSampler {
+    std::string    name;
+    SamplerFilter  filter  = SamplerFilter::Linear;
+    SamplerAddress address = SamplerAddress::Wrap;
+};
+
+// A pass: one pixel shader run over a whole target level.
+//
+// The shader is HLSL, compiled as given: nothing is prepended to it, so the line
+// numbers in compiler messages are the caller's. Its input is RENDER's fullscreen
+// triangle:
+//   float4 : SV_Position    the pixel
+//   float2 : TEXCOORD0      uv, 0..1 across the target, origin top-left (v down):
+//                           uv (0, 0) is the first texel of ReadTargets' first row
+// declared in that order (Direct3D links them by position): both, or SV_Position alone.
+// What it returns (SV_Target) is written to the target as it is, with no blending.
+// Texture2D and SamplerState are separate objects (one sampler may serve every
+// texture); constants live in cbuffers.
+struct PassDesc {
+    std::string  name;                     // names the pass in messages and errors
+    std::string  pixelShader;              // HLSL source
+    std::string  entryPoint = "main";
+    TargetFormat format     = TargetFormat::RGBA16F;   // what it renders into (RunPass checks)
+    // A SamplerState not listed here is Linear + Wrap; a listed name the shader doesn't
+    // declare is ignored.
+    std::vector<PassSampler> samplers;
+};
+
+struct PassResult {
+    PassHandle  pass = PassHandle::Invalid;   // Invalid: the shader or its pipeline failed
+    // Empty when the compile was clean. Otherwise it starts "pass '<name>':" on a line of
+    // its own, then the compiler's own text (errors, or warnings beside a valid pass).
+    // That text is in the backend compiler's format (FXC on Direct3D 12, glslang on
+    // Vulkan), its line numbers counting the caller's source from 1.
+    std::string messages;
+};
+
+// One constant of a pass's shader, a member of one of its cbuffers.
+struct PassConstant {
+    std::string name;
+    bool        isInt      = false;   // int / uint / bool (SetConstant's int form)
+    int         components = 1;       // a scalar 1, a vector its size, a matrix rows × columns
+    int         arraySize  = 0;       // 0 = not an array
+    bool        matrix     = false;   // matrices can't be set yet (SetConstant refuses them)
+};
+
+struct PassInfo {
+    std::vector<PassConstant> constants;   // every cbuffer's members
+    std::vector<std::string>  textures;    // the Texture2Ds it declares
+    std::vector<std::string>  samplers;    // the SamplerStates it declares
+};
+
+// A target level to read back (ReadTargets).
+struct TargetRead {
+    TextureHandle target = TextureHandle::Invalid;
+    int           mip    = 0;
+};
+
+// What ReadTargets read: four floats per texel (RGBA; half-floats widened; RGBA8 as
+// 0..1; a format without G, B or A reads them as 0, 0 and 1), rows top to bottom.
+struct TargetImage {
+    bool               ok = false;
+    int                width = 0, height = 0;
+    std::vector<float> rgba;
+    std::string        error;   // why not, when !ok
+};
+
+// The image-pass half of a renderer, reached through ISceneRenderer::Images().
+// Runtime errors are one line naming the pass and the binding, e.g.
+//   pass 'o12': texture 'o7_tex' is not bound
+// and go to `error` when it isn't null.
+struct IImageRenderer {
+    virtual ~IImageRenderer() = default;
+
+    // ── Targets (R6) ──
+    // A target passes render into, that passes and DrawSurface sample, and that
+    // ReadTargets reads; an ordinary TextureHandle, released with FreeTexture.
+    // Sampled, its texels are used as stored (no sRGB decoding, floats unclamped):
+    // in the Lighting and Effect models (display values) its numbers go straight in.
+    // Its contents are undefined until cleared or rendered. Invalid on failure.
+    virtual TextureHandle CreateTarget(const TargetDesc& desc, std::string* error = nullptr) = 0;
+    // Fill level `mip` (-1 = every level) with `value`.
+    virtual bool ClearTarget(TextureHandle target, const glm::vec4& value, int mip = -1, std::string* error = nullptr) = 0;
+    // Levels 1.. from level 0, each texel the average of its 2×2 parent texels.
+    virtual bool GenerateMips(TextureHandle target, std::string* error = nullptr) = 0;
+
+    // ── Passes (R5) ──
+    // Compiles the shader and builds its pipeline, at once (blocking). A pass lives
+    // until FreePass or the renderer's end. It keeps its constant values and texture
+    // bindings (by handle; it holds no texture alive: a freed one fails the next run).
+    virtual PassResult CreatePass(const PassDesc& desc) = 0;
+    virtual void       FreePass(PassHandle pass) = 0;
+    virtual PassInfo   Describe(PassHandle pass) const = 0;
+    // Set a constant by name (any of the shader's cbuffers): components × max(arraySize, 1)
+    // values, element after element. RENDER packs them by HLSL's rules (an array's
+    // elements on 16-byte strides). Kept until set again; unset constants are 0.
+    // False for an unknown name, a wrong count, a float / int mismatch or a matrix.
+    virtual bool SetConstant(PassHandle pass, std::string_view name, std::span<const float> values,
+                             std::string* error = nullptr) = 0;
+    virtual bool SetConstant(PassHandle pass, std::string_view name, std::span<const std::int32_t> values,
+                             std::string* error = nullptr) = 0;
+    // Bind a target or any other texture to the Texture2D `name`.
+    virtual bool SetTexture(PassHandle pass, std::string_view name, TextureHandle texture,
+                            std::string* error = nullptr) = 0;
+    // Render the pass over all of `target`'s level `mip`. False when a handle is
+    // invalid, the target's format isn't the pass's, a Texture2D the shader declares is
+    // unbound or freed, or the target is also one of the pass's inputs (iterate
+    // through two targets instead).
+    virtual bool RunPass(PassHandle pass, TextureHandle target, int mip = 0, std::string* error = nullptr) = 0;
+
+    // ── Readback (R9) ──
+    // Read target levels back to the CPU, one result per request in order, waiting for
+    // the GPU once for them all. A request for a texture that isn't a target, or a
+    // level it doesn't have, fails alone.
+    virtual std::vector<TargetImage> ReadTargets(std::span<const TargetRead> reads) = 0;
+    // One level (ReadTargets with one request).
+    TargetImage ReadTarget(TextureHandle target, int mip = 0) {
+        const TargetRead read{ target, mip };
+        std::vector<TargetImage> images = ReadTargets(std::span<const TargetRead>(&read, 1));
+        return images.empty() ? TargetImage{} : std::move(images.front());
+    }
+};
+
 // ── ISceneRenderer ────────────────────────────────────────────────────────────
 // Scene-level rendering abstraction.  Implementations are drop-in: they differ
 // only in backend machinery; the viewport only calls this.
@@ -466,6 +614,9 @@ struct ISceneRenderer {
     // The renderer's overlay interface, or null when it has none. Optional, with a
     // default, so renderers written before it (SCT's GL backend) build unchanged.
     virtual IOverlayRenderer* Overlays() { return nullptr; }
+    // The renderer's image passes (targets, passes from caller HLSL, readback), or
+    // null when it has none. Optional, with a default, like Overlays().
+    virtual IImageRenderer* Images() { return nullptr; }
 
     // ── Frame lifecycle ───────────────────────────────────────────────────────
     virtual void BeginFrame(int width, int height)                            = 0;

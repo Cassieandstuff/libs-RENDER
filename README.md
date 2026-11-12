@@ -28,6 +28,18 @@ top; screen-space lines, triangles and text (with anchors and an optional pill);
 (`DrawBones`, styled by `SetSkeletonStyle`). Colours are display (sRGB) values, sizes physical pixels. A renderer offers it
 through `ISceneRenderer::Overlays()`, which defaults to `nullptr` (callers check for null).
 
+**Image passes.** `IImageRenderer`, through `ISceneRenderer::Images()` (null by default), renders a node graph's images
+headless or beside a scene, at once and outside a frame:
+- **Targets.** `CreateTarget` makes persistent targets: R16F to RGBA32F, or linear RGBA8, with optional mips. They are
+  ordinary `TextureHandle`s, sampled by passes and by `DrawSurface` as stored (no sRGB), and freed with `FreeTexture`.
+  `ClearTarget` and `GenerateMips` (a 2×2 box) work on them.
+- **Passes.** `CreatePass` compiles a caller's HLSL pixel shader as given and returns the compiler's text under the
+  pass's name, its line numbers the caller's. The shader's input is a fullscreen triangle (`SV_Position`, `TEXCOORD0` uv
+  with a top-left origin).
+- **Constants and textures.** Constants are set by name and packed by RENDER from cbuffer reflection; `Describe` lists
+  them. Textures and samplers are bound by name. `RunPass` refuses a target that the pass also samples.
+- **Readback.** `ReadTargets` reads any level as RGBA floats, waiting for the GPU once per batch.
+
 ## The Diligent backend
 
 No Diligent type crosses the public header (pimpl throughout), so consumers need
@@ -40,7 +52,7 @@ neither Diligent's include paths nor its macros.
 | `RenderDevice` | Device + immediate context. `Create({preferred, allowFallback, validation, useWarp})` tries the preferred backend, then the other. `FinishFrame()` for frames that present nothing, `WaitIdle()` for teardown. |
 | `ViewportSurface` | A swap chain on a native window (HWND): RGBA8 sRGB, no depth. `Resize`, `Present(sync)`. |
 | `OffscreenTarget` | RGBA8 sRGB colour target with `ReadbackRGBA8()` (tests, thumbnails). |
-| `DiligentSceneRenderer` | `ISceneRenderer` and `IOverlayRenderer` (see [Overlays](#overlays)), plus `SetOutputTarget(surface or offscreen)`, `SetExposure`, `SetViewStyle` (background, grid and axis colours), `LastFrameStats()`, `DrawLines(segments, widthPx)`, `SetGlyphAtlas` (the host-baked overlay font) and `DebugReadbackRGBA8` for face-tint results. |
+| `DiligentSceneRenderer` | `ISceneRenderer`, `IOverlayRenderer` (see [Overlays](#overlays)) and `IImageRenderer` (image passes), plus `SetOutputTarget(surface or offscreen)`, `SetExposure`, `SetViewStyle` (background, grid and axis colours), `LastFrameStats()`, `DrawLines(segments, widthPx)`, `SetGlyphAtlas` (the host-baked overlay font) and `DebugReadbackRGBA8` for face-tint results. |
 
 Destroy in reverse order: surfaces and renderers before their `RenderDevice`.
 
