@@ -85,7 +85,8 @@ public:
     bool               supportsSwizzle() const;     // texture-view component swizzle granted
 
     // Ends a frame that did GPU work but presented nothing (lets the engine release
-    // stale resources). A frame that presents a ViewportSurface needs no call.
+    // stale resources and its dynamic memory). A frame that presents a ViewportSurface, or is read back from an
+    // OffscreenTarget, needs no call.
     void FinishFrame();
     // Blocks until the GPU is idle (shutdown, resizes).
     void WaitIdle();
@@ -139,7 +140,8 @@ public:
     // Fill with a colour given in sRGB-encoded 0..1 components (what ReadbackRGBA8 returns).
     void Clear(float r, float g, float b, float a);
     // The target's pixels: rows top to bottom, tightly packed RGBA8 (sRGB-encoded).
-    // Waits for the GPU.
+    // Waits for the GPU, then ends the frame as a ViewportSurface's Present does (RenderDevice::FinishFrame), so the
+    // frame's dynamic memory comes back: call it between frames, never inside one.
     std::vector<std::uint8_t> ReadbackRGBA8();
 
     struct Impl;

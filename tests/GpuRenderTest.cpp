@@ -1201,6 +1201,20 @@ void TestDynamicHeapExhaustion(RenderDevice& dev) {
     const Rgba after = s.At(s.Render([&](auto& r) { r.DrawMesh(quad, glm::mat4(1.f), fx); }), glm::vec3(0.f));
     std::printf("   next frame: skipped %d, centre (%d,%d,%d)\n", s.r.LastFrameStats().skippedNoMemory, after.r, after.g, after.b);
     check("the next frame draws again", s.r.LastFrameStats().skippedNoMemory == 0 && Near(after.r, 64, 3));
+
+    // Frames drawn off screen and read back, with no Present and no FinishFrame of the caller's: each needs about a
+    // quarter of the heap, so they fit only if the readback hands each frame's memory back.
+    int skipped = 0;
+    for (int frame = 0; frame < 40; ++frame) {
+        s.r.BeginFrame(PbrScene::W, PbrScene::H);
+        s.r.SetCamera(s.view, s.proj);
+        for (int i = 0; i < 1000; ++i) s.r.DrawMesh(quad, glm::mat4(1.f), fx);
+        s.r.EndFrame();
+        (void)s.target->ReadbackRGBA8();
+        skipped += s.r.LastFrameStats().skippedNoMemory;
+    }
+    std::printf("   40 read-back frames of 1000 draws: %d skipped for memory\n", skipped);
+    check("a read-back frame gives its dynamic memory back", skipped == 0);
 }
 
 // ── 5c'''. Image space: adaptation, tone, grade, bloom ───────────────────────────

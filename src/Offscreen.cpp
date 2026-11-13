@@ -69,12 +69,19 @@ std::vector<std::uint8_t> OffscreenTarget::ReadbackRGBA8() {
     std::vector<std::uint8_t> pixels(static_cast<size_t>(m_impl->width) * m_impl->height * 4);
     MappedTextureSubresource mapped{};
     ctx->MapTextureSubresource(m_impl->staging, 0, 0, MAP_READ, MAP_FLAG_DO_NOT_WAIT, nullptr, mapped);
-    if (!mapped.pData) return {};
-    const size_t rowBytes = static_cast<size_t>(m_impl->width) * 4;
-    for (int y = 0; y < m_impl->height; ++y)
-        std::memcpy(pixels.data() + y * rowBytes,
-                    static_cast<const std::uint8_t*>(mapped.pData) + static_cast<size_t>(y) * mapped.Stride, rowBytes);
-    ctx->UnmapTextureSubresource(m_impl->staging, 0, 0);
+    if (mapped.pData) {
+        const size_t rowBytes = static_cast<size_t>(m_impl->width) * 4;
+        for (int y = 0; y < m_impl->height; ++y)
+            std::memcpy(pixels.data() + y * rowBytes,
+                        static_cast<const std::uint8_t*>(mapped.pData) + static_cast<size_t>(y) * mapped.Stride, rowBytes);
+        ctx->UnmapTextureSubresource(m_impl->staging, 0, 0);
+    } else {
+        pixels.clear();
+    }
+    // A read-back frame is finished, as a presented one is (Present calls FinishFrame): the engine releases the frame's
+    // dynamic memory only then. Without it, frames drawn off screen while no viewport presents (a hidden view pumped
+    // for streaming, captures) kept theirs until Vulkan's dynamic heap ran out.
+    m_impl->owner->FinishFrame();
     return pixels;
 }
 
