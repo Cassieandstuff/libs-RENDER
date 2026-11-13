@@ -263,6 +263,7 @@ PBR_Renderer::PSO_FLAGS FlagsFor(const MappedMaterial& m) {
     if (m.specSource != MappedMaterial::SpecSource::None) f |= PBR_Renderer::PSO_FLAG_USE_SPECULAR_MAP;
     if (m.vertexColors) f |= PBR_Renderer::PSO_FLAG_USE_VERTEX_COLORS;
     if (m.joints) f |= PBR_Renderer::PSO_FLAG_USE_JOINTS;
+    if (m.uvTransform) f |= PBR_Renderer::PSO_FLAG_ENABLE_TEXCOORD_TRANSFORM;
     return f;
 }
 
@@ -300,12 +301,19 @@ void WriteMaterialAttribs(Uint8* dst, PBR_Renderer::PSO_FLAGS flags, const Mappe
         dst += sizeof(HLSL::PBRMaterialSpecularAttribs);
     }
 
+    // Packed props (GLTF::Material::TextureShaderAttribs): bits 0-2 the UV set + 1 (UV0), 3-5 / 6-8 the U / V address
+    // mode - 1 (TEXTURE_ADDRESS_WRAP 1, _CLAMP 3), 9.. the mip count (15: all). The transform is uv·M + bias, M's rows
+    // UVScaleAndRotation.xy and .zw (read under PSO_FLAG_ENABLE_TEXCOORD_TRANSFORM).
+    const std::uint32_t wrapU = (m.clampU ? TEXTURE_ADDRESS_CLAMP : TEXTURE_ADDRESS_WRAP) - 1u;
+    const std::uint32_t wrapV = (m.clampV ? TEXTURE_ADDRESS_CLAMP : TEXTURE_ADDRESS_WRAP) - 1u;
     auto* tex = reinterpret_cast<HLSL::PBRMaterialTextureAttribs*>(dst);
     PBR_Renderer::ProcessTexturAttribs(flags, [&](int index, PBR_Renderer::TEXTURE_ATTRIB_ID) {
         HLSL::PBRMaterialTextureAttribs& t = tex[index];
         t = {};
-        t.PackedProps         = 1u | (15u << 9u);   // UV0, wrap/wrap, all mips
-        t.UVScaleAndRotation  = float4{ 1.f, 0.f, 0.f, 1.f };
+        t.PackedProps         = 1u | (wrapU << 3u) | (wrapV << 6u) | (15u << 9u);
+        t.UBias               = m.uvOffset.x;
+        t.VBias               = m.uvOffset.y;
+        t.UVScaleAndRotation  = float4{ m.uvScale.x, 0.f, 0.f, m.uvScale.y };
         t.AtlasUVScaleAndBias = float4{ 1.f, 1.f, 0.f, 0.f };
     });
 }

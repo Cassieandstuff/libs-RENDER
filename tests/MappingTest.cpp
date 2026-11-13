@@ -164,6 +164,21 @@ int main() {
     check("depthTest / depthBias pass through", !m.depthTest && m.depthBias == 1);
     s.depthBias = 99;
     check("depthBias is clamped to 15", MapMaterial(s, MaterialInputs{}).depthBias == 15);
+    s = {};
+
+    // Texture coordinates: the surface's transform and clamp reach the PBR material.
+    m = MapMaterial(s, MaterialInputs{});
+    check("no UV transform or clamp by default", !m.uvTransform && !m.clampU && !m.clampV);
+    s.uvScale  = { 2.f, 3.f };
+    s.uvOffset = { 0.25f, 0.5f };
+    s.clampV   = true;
+    m = MapMaterial(s, MaterialInputs{});
+    check("uvScale / uvOffset make a UV transform",
+          m.uvTransform && Eq(m.uvScale.x, 2.f) && Eq(m.uvScale.y, 3.f) && Eq(m.uvOffset.x, 0.25f) && Eq(m.uvOffset.y, 0.5f));
+    check("clampU / clampV pass through", !m.clampU && m.clampV);
+    s          = {};
+    s.uvOffset = { 0.5f, 0.f };
+    check("an offset alone is a transform", MapMaterial(s, MaterialInputs{}).uvTransform);
 
     std::printf(g_failures == 0 ? "\nALL PASSED\n" : "\n%d CHECK(S) FAILED\n", g_failures);
     return g_failures;

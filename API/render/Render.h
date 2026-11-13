@@ -124,9 +124,7 @@ struct LightingParams {
     // Parallax: offset the UVs by heightMap (red channel) along the view direction.
     TextureHandle heightMap      = TextureHandle::Invalid;
     float         parallaxScale  = 0.04f;
-    // Texture coordinate transform: uv·scale + offset.
-    glm::vec2     uvOffset       = { 0.f, 0.f };
-    glm::vec2     uvScale        = { 1.f, 1.f };
+    // (The texture coordinate transform is DrawSurface's: uvOffset / uvScale.)
 };
 
 // The Effect model's parameters (DrawSurface::effect).
@@ -149,9 +147,7 @@ struct EffectParams {
     // > 0 (blended surfaces): fades out within this distance (world units) of what
     // lies behind it, so it meets the scene softly (soft particles).
     float         softDepth      = 0.f;
-    // Texture coordinate transform: uv·scale + offset.
-    glm::vec2     uvOffset       = { 0.f, 0.f };
-    glm::vec2     uvScale        = { 1.f, 1.f };
+    // (The texture coordinate transform is DrawSurface's: uvOffset / uvScale.)
 };
 
 // ── Per-draw surface parameters ───────────────────────────────────────────────
@@ -201,6 +197,14 @@ struct DrawSurface {
     // order, right after the blended draw submitted before it (NiAlphaProperty's
     // no-sorter bit).
     bool          noSort          = false;
+    // Texture coordinates, in every model: uv·uvScale + uvOffset, for every texture the
+    // mesh's UVs address (an effect's palette and an environment cube aren't). Past
+    // 0..1 a texture repeats; clampU / clampV hold it at its edge texels along that
+    // axis instead (a NIF shader's texture clamp mode).
+    glm::vec2     uvOffset        = { 0.f, 0.f };
+    glm::vec2     uvScale         = { 1.f, 1.f };
+    bool          clampU          = false;
+    bool          clampV          = false;
 
     MaterialModel model           = MaterialModel::Pbr;
     // Lighting / Effect: the blended modes' factors (AlphaBlend, Additive and

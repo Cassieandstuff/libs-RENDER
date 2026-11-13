@@ -60,6 +60,12 @@ MappedMaterial MapMaterial(const DrawSurface& s, const MaterialInputs& in) {
     m.wireframe = s.wireframe && in.wireframeOk;
     m.depthTest = s.depthTest;
     m.depthBias = std::clamp(s.depthBias, 0, 15);
+
+    m.uvScale     = s.uvScale;
+    m.uvOffset    = s.uvOffset;
+    m.uvTransform = s.uvScale != glm::vec2(1.f) || s.uvOffset != glm::vec2(0.f);
+    m.clampU      = s.clampU;
+    m.clampV      = s.clampV;
     return m;
 }
 

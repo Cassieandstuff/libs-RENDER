@@ -71,11 +71,13 @@ struct FixedState {
     int         depthBias  = 0;
     bool        cullBack   = true;
     bool        wireframe  = false;
+    bool        clampU     = false;   // the mesh-UV textures' samplers clamp along U / V (DrawSurface::clampU / V)
+    bool        clampV     = false;
     std::uint32_t Bits() const {
         return (blend ? 1u : 0u) | (static_cast<std::uint32_t>(src) << 1) | (static_cast<std::uint32_t>(dst) << 5) |
                (depthWrite ? 1u << 9 : 0u) | (depthTest ? 1u << 10 : 0u) |
                (static_cast<std::uint32_t>(std::clamp(depthBias, 0, 15)) << 11) | (cullBack ? 1u << 15 : 0u) |
-               (wireframe ? 1u << 16 : 0u);
+               (wireframe ? 1u << 16 : 0u) | (clampU ? 1u << 17 : 0u) | (clampV ? 1u << 18 : 0u);
     }
 };
 
@@ -265,6 +267,8 @@ LightingState::Variant& VariantFor(DiligentSceneRenderer::Impl& r, LightingState
     std::vector<ShaderResourceVariableDesc> vars;
     std::vector<ImmutableSamplerDesc>       samplers;
     SamplerDesc aniso = Sam_Aniso8xWrap;
+    if (fixed.clampU) aniso.AddressU = TEXTURE_ADDRESS_CLAMP;
+    if (fixed.clampV) aniso.AddressV = TEXTURE_ADDRESS_CLAMP;
     for (const TextureSlot& slot : kSlots) {
         if (slot.gate && !(features & slot.gate)) continue;
         vars.push_back({ SHADER_TYPE_PIXEL, slot.name, SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC });
@@ -428,6 +432,8 @@ void LightingDraw(DiligentSceneRenderer::Impl& r, const GpuMesh& mesh, const glm
     fixed.depthBias  = s.depthBias;
     fixed.cullBack   = !s.twoSided && !s.xray;
     fixed.wireframe  = s.wireframe && r.owner.supportsWireframe();
+    fixed.clampU     = s.clampU;
+    fixed.clampV     = s.clampV;
     if (!fixed.blend) fixed.src = fixed.dst = BlendFactor::One;   // irrelevant: one key
 
     LightingState::Variant& var = VariantFor(r, *st, f, fixed);
@@ -451,7 +457,7 @@ void LightingDraw(DiligentSceneRenderer::Impl& r, const GpuMesh& mesh, const glm
         d->specColor = glm::vec4(L.specularColor, s.specularStrength);
         d->emissive  = glm::vec4(s.emissiveColor * s.emissiveMultiple, L.glossiness);
         d->effects   = { L.effect1, L.effect2, L.envScale, L.parallaxScale };
-        d->uv        = { L.uvOffset.x, L.uvOffset.y, L.uvScale.x, L.uvScale.y };
+        d->uv        = { s.uvOffset.x, s.uvOffset.y, s.uvScale.x, s.uvScale.y };
         d->alpha     = { s.alphaThreshold, static_cast<float>(s.alphaTestFunc),
                          blended && fixed.dst == BlendFactor::One ? 1.f : 0.f, blended ? 1.f : 0.f };
         auto srgb    = [](const GpuTexture* t) { return t && t->srgb ? 1.f : 0.f; };
@@ -459,9 +465,7 @@ void LightingDraw(DiligentSceneRenderer::Impl& r, const GpuMesh& mesh, const glm
         d->effectColor = E.baseColor;
         d->effectScale = { E.baseColorScale, 0.f, 0.f, 0.f };
         d->falloff     = { E.falloffStartAngle, E.falloffStopAngle, E.falloffStartOpacity, E.falloffStopOpacity };
-        d->effectFlags = { E.softDepth, E.paletteColor ? 1.f : 0.f, E.paletteAlpha ? 1.f : 0.f, srgb(palette) };
-        if (s.model == MaterialModel::Effect) d->uv = { E.uvOffset.x, E.uvOffset.y, E.uvScale.x, E.uvScale.y };
-    }
+        d->effectFlags = { E.softDepth, E.paletteColor ? 1.f : 0.f, E.paletteAlpha ? 1.f : 0.f, srgb(palette) };    }
     if (skinned) {
         const Uint32 n = static_cast<Uint32>(std::min<std::size_t>(bones.size(), kMaxJoints));
         if (bones.size() > kMaxJoints && !st->warnedJoints) {

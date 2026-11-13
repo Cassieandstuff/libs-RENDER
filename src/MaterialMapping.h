@@ -64,6 +64,11 @@ struct MappedMaterial {
     float     roughnessFactor = 1.f;
     float     specularFactor  = 1.f;
     float     alphaCutoff     = 0.5f;
+
+    // Every texture's coordinates: uv·uvScale + uvOffset (uvTransform when that isn't the identity), clamped per axis.
+    glm::vec2 uvScale{ 1.f }, uvOffset{ 0.f };
+    bool      uvTransform = false;
+    bool      clampU = false, clampV = false;
 };
 
 MappedMaterial MapMaterial(const DrawSurface& surface, const MaterialInputs& in);

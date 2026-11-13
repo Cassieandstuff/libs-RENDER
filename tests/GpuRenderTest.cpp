@@ -1070,6 +1070,50 @@ void TestImagePassMarathon(RenderDevice& dev) {
     check("and each one counted (the sum is 5000)", im.ok && im.rgba[0] == static_cast<float>(kRuns));
 }
 
+// ── 5e. Texture coordinates: DrawSurface's UV transform and clamp, in every model ──
+// A 4×4 texture, red in its top two rows and green below, on the quad (v runs 0 at its top to 1 at its bottom, so
+// v = (1 − y) / 2). At y = −0.5 (v = 0.75) it reads green; scaled by 0.5 (v 0.375) or offset by 0.5 (v 1.25, wrapping to
+// 0.25) red. At y = −0.25 (v = 0.625) scaled by 2 (v 1.25): wrapping reads red, clamping V the bottom edge, green.
+void TestUvTransform(RenderDevice& dev) {
+    std::printf("-- UV transform and clamp --\n");
+    PbrScene s(dev);
+    s.r.SetViewTransform(ViewTransform::Standard);
+    const MeshHandle    quad = s.r.UploadMesh(MakeQuad(0.f));
+    const TextureHandle rows = s.r.LoadTextureFromMemory(MakeDdsRows({ 0, 0, 255, 255 }, { 0, 255, 0, 255 }), TexColorSpace::Srgb);
+    auto red   = [](Rgba p) { return p.r > p.g + 40; };
+    auto green = [](Rgba p) { return p.g > p.r + 40; };
+    const struct { MaterialModel model; const char* name; } models[] = {
+        { MaterialModel::Effect, "Effect" }, { MaterialModel::Lighting, "Lighting" }, { MaterialModel::Pbr, "Pbr" } };
+    for (const auto& mdl : models) {
+        DrawSurface base;
+        base.model   = mdl.model;
+        base.diffuse = rows;
+        auto at = [&](const DrawSurface& surface, float y) {
+            return s.At(s.Render([&](auto& r) { r.DrawMesh(quad, glm::mat4(1.f), surface); }), glm::vec3(0.f, y, 0.f));
+        };
+        const Rgba plain = at(base, -0.5f);
+        DrawSurface scaled = base;
+        scaled.uvScale     = { 1.f, 0.5f };
+        const Rgba half    = at(scaled, -0.5f);
+        DrawSurface offset = base;
+        offset.uvOffset    = { 0.f, 0.5f };
+        const Rgba moved   = at(offset, -0.5f);
+        DrawSurface twice  = base;
+        twice.uvScale      = { 1.f, 2.f };
+        const Rgba wrapped = at(twice, -0.25f);
+        twice.clampV       = true;
+        const Rgba clamped = at(twice, -0.25f);
+        std::printf("   %s: plain (%d,%d,%d) scaled (%d,%d,%d) offset (%d,%d,%d) wrap (%d,%d,%d) clamp (%d,%d,%d)\n", mdl.name, plain.r,
+                    plain.g, plain.b, half.r, half.g, half.b, moved.r, moved.g, moved.b, wrapped.r, wrapped.g, wrapped.b, clamped.r,
+                    clamped.g, clamped.b);
+        check((std::string(mdl.name) + ": untransformed, the bottom half is green").c_str(), green(plain));
+        check((std::string(mdl.name) + ": uvScale reaches its textures").c_str(), red(half));
+        check((std::string(mdl.name) + ": uvOffset does, wrapping past 1").c_str(), red(moved));
+        check((std::string(mdl.name) + ": past 1 a texture repeats").c_str(), red(wrapped));
+        check((std::string(mdl.name) + ": clampV holds it at its edge").c_str(), green(clamped));
+    }
+}
+
 // ── 5c'''. Image space: adaptation, tone, grade, bloom ───────────────────────────
 // A Lighting quad lit to a known display value (0.7: linear 0.448), as in TestLightingModel.
 void TestImageSpace(RenderDevice& dev) {
@@ -2104,6 +2148,7 @@ int main(int argc, char** argv) {
     TestEffectModel(*dev);
     TestImagePasses(*dev);
     TestImagePassMarathon(*dev);
+    TestUvTransform(*dev);
     TestImageSpace(*dev);
     TestPick(*dev);
     TestUpdateMesh(*dev);
