@@ -108,6 +108,8 @@ struct FrameConstants {
     glm::vec4 lightPos[kMaxLights];
     glm::vec4 lightColor[kMaxLights];
     glm::vec4 invProjZ, invProjW;
+    glm::vec4 exposureA;   // the image space's adapt key, strength, min and max exposure (the post pass's Exposure())
+    glm::vec4 exposureB;   // x = base exposure, y = 1 when it adapts (g_Adapted holds last frame's luminance)
 };
 
 struct DrawConstants {
@@ -130,6 +132,7 @@ constexpr TextureSlot kSlots[] = {
     { "g_Palette", kPalette },
     { "g_SceneDepth", kSoftDepth },
     { "g_SceneColor", kRefraction },
+    { "g_Adapted", kEffect },
 };
 constexpr std::size_t kNumSlots = std::size(kSlots);
 
@@ -275,7 +278,9 @@ LightingState::Variant& VariantFor(DiligentSceneRenderer::Impl& r, LightingState
         if (slot.gate && !(features & slot.gate)) continue;
         if ((features & kRefraction) && std::strcmp(slot.name, "g_Diffuse") == 0) continue;   // shows the scene, not itself
         vars.push_back({ SHADER_TYPE_PIXEL, slot.name, SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC });
-        if (std::strcmp(slot.name, "g_SceneDepth") == 0 || std::strcmp(slot.name, "g_SceneColor") == 0) continue;   // Load: no sampler
+        if (std::strcmp(slot.name, "g_SceneDepth") == 0 || std::strcmp(slot.name, "g_SceneColor") == 0 ||
+            std::strcmp(slot.name, "g_Adapted") == 0)
+            continue;   // read with Load: no sampler
         const bool clamped = std::strcmp(slot.name, "g_Env") == 0 || std::strcmp(slot.name, "g_Palette") == 0;
         samplers.push_back({ SHADER_TYPE_PIXEL, slot.name, clamped ? Sam_LinearClamp : aniso });
     }
@@ -330,6 +335,10 @@ void WriteFrame(DiligentSceneRenderer::Impl& r, LightingState& st) {
     const glm::mat4 invProj = glm::inverse(r.projZO);
     f->invProjZ = { invProj[0][2], invProj[1][2], invProj[2][2], invProj[3][2] };
     f->invProjW = { invProj[0][3], invProj[1][3], invProj[2][3], invProj[3][3] };
+    // The exposure the post pass will multiply the frame by, so effects can divide it back out.
+    const ImageSpace& is = r.imageSpace;
+    f->exposureA = { std::max(is.adaptKey, 1e-5f), std::clamp(is.adaptStrength, 0.f, 4.f), is.minExposure, is.maxExposure };
+    f->exposureB = { r.exposure, is.enabled && ImageSpaceAdaptedView(r) ? 1.f : 0.f, 0.f, 0.f };
 }
 
 } // namespace
@@ -492,12 +501,15 @@ void LightingDraw(DiligentSceneRenderer::Impl& r, const GpuMesh& mesh, const glm
     // Textures: what the variant reads; a missing optional map never reaches here (its feature is off).
     ITextureView* white = st->white->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
     ITextureView* flat  = st->flatNormal->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
-    const GpuTexture* bound[kNumSlots] = { diffuse, normal, specular, glow, env, envMask, lightMap, backMap, height, palette, nullptr, nullptr };
+    const GpuTexture* bound[kNumSlots] = { diffuse, normal, specular, glow, env, envMask, lightMap, backMap, height, palette,
+                                           nullptr, nullptr, nullptr };
+    ITextureView* adaptedView = ImageSpaceAdaptedView(r);
     for (std::size_t i = 0; i < kNumSlots; ++i) {
         if (!var.textures[i]) continue;
         ITextureView* view = bound[i] ? bound[i]->srv.RawPtr() : (i == 1 ? flat : white);
         if (std::strcmp(kSlots[i].name, "g_SceneDepth") == 0) view = r.sceneDepthCopy->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
         if (std::strcmp(kSlots[i].name, "g_SceneColor") == 0) view = r.sceneColorCopy->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+        if (std::strcmp(kSlots[i].name, "g_Adapted") == 0) view = adaptedView ? adaptedView : white;   // unread when it doesn't adapt
         var.textures[i]->Set(view);
     }
 

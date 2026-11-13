@@ -222,6 +222,9 @@ ImageSpacePtr CreateImageSpaceState(DiligentSceneRenderer::Impl& r);
 // The post pass with an image space: adaptation, bloom, tone and grade into the output. False when it could not run (the
 // plain post pass then does).
 bool ImageSpacePost(DiligentSceneRenderer::Impl& r, Diligent::ITextureView* outputRTV);
+// The adapted luminance the image space's exposure follows, as it stood after the last frame (1×1 R32F); null before the
+// first image-space frame or without one. Effects read it to keep their own brightness (LightingPass).
+Diligent::ITextureView* ImageSpaceAdaptedView(DiligentSceneRenderer::Impl& r);
 
 WirePtr CreateWireState(DiligentSceneRenderer::Impl& r);
 void    WireRun(DiligentSceneRenderer::Impl& r, Diligent::ITextureView* outputRTV);   // EndFrame, after the grid: outlines, wireframe

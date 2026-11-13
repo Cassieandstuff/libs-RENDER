@@ -291,6 +291,12 @@ void Bind(const ImageSpaceState::Pass& pass, const char* name, ITexture* tex) {
 
 } // namespace
 
+ITextureView* ImageSpaceAdaptedView(DiligentSceneRenderer::Impl& r) {
+    ImageSpaceState* st = r.imageSpaceState.get();
+    if (!st || st->failed || st->first || !st->adapted[st->current]) return nullptr;
+    return st->adapted[st->current]->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+}
+
 bool ImageSpacePost(DiligentSceneRenderer::Impl& r, ITextureView* outputRTV) {
     ImageSpaceState* st = r.imageSpaceState.get();
     if (!st || !st->cb || !Prepare(r, *st)) return false;

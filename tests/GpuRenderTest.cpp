@@ -1154,6 +1154,28 @@ void TestRefraction(RenderDevice& dev) {
     check("normals tipped to +Y show what lies below (green)", bent.g > 150 && bent.r < 100);
 }
 
+// ── 5g. Effects keep their own brightness under the frame's exposure ─────────────
+// At exposure ×4 an unlit effect at base 0.25 still reads 0.25 (64), as without exposure.
+void TestEffectExposure(RenderDevice& dev) {
+    std::printf("-- effects and exposure --\n");
+    PbrScene s(dev);
+    s.r.SetViewTransform(ViewTransform::Standard);
+    const MeshHandle quad = s.r.UploadMesh(MakeQuad(0.f));
+    DrawSurface fx;
+    fx.model            = MaterialModel::Effect;
+    fx.effect.baseColor = { 0.25f, 0.25f, 0.25f, 1.f };
+    auto shoot = [&](float exposure) {
+        s.r.SetExposure(exposure);
+        return s.At(s.Render([&](auto& r) { r.DrawMesh(quad, glm::mat4(1.f), fx); }), glm::vec3(0.f));
+    };
+    const Rgba plain   = shoot(1.f);
+    const Rgba exposed = shoot(4.f);
+    s.r.SetExposure(1.f);
+    std::printf("   effect at exposure 1 (%d,%d,%d), at 4 (%d,%d,%d)\n", plain.r, plain.g, plain.b, exposed.r, exposed.g, exposed.b);
+    check("an effect reads its base colour (0.25 -> 64)", Near(plain.r, 64, 3));
+    check("exposure x4 leaves an effect as it was", Near(exposed.r, plain.r, 3));
+}
+
 // ── 5c'''. Image space: adaptation, tone, grade, bloom ───────────────────────────
 // A Lighting quad lit to a known display value (0.7: linear 0.448), as in TestLightingModel.
 void TestImageSpace(RenderDevice& dev) {
@@ -2186,6 +2208,7 @@ int main(int argc, char** argv) {
     TestDrawQueue(*dev);
     TestLightingModel(*dev);
     TestEffectModel(*dev);
+    TestEffectExposure(*dev);
     TestImagePasses(*dev);
     TestImagePassMarathon(*dev);
     TestUvTransform(*dev);

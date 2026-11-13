@@ -46,6 +46,8 @@ cbuffer LightingFrame {
     float4   g_LightColor[MAX_LIGHTS]; // rgb
     float4   g_InvProjZ;             // rows 2 and 3 of the inverse projection (depth 0..1 to view space)
     float4   g_InvProjW;
+    float4   g_ExposureA;            // image space: adapt key, strength, min exposure, max exposure
+    float4   g_ExposureB;            // x = base exposure, y = 1 when it adapts (g_Adapted)
 };
 cbuffer LightingDraw {
     float4x4 g_World;
@@ -161,6 +163,9 @@ Texture2D<float>  g_SceneDepth;
 #if REFRACTION
 Texture2D<float4> g_SceneColor;   // the scene as it stood before the refraction surfaces
 #endif
+#if EFFECT
+Texture2D<float>  g_Adapted;      // the image space's adapted luminance, as the last frame left it
+#endif
 
 struct PSIn {
     float4 pos   : SV_POSITION;
@@ -253,6 +258,17 @@ float ViewDepth(float depth) {
 }
 
 #if EFFECT
+// The exposure the post pass multiplies the frame by: the base exposure, times the image space's eye adaptation when it
+// runs (its Exposure(), from the luminance the last frame adapted to).
+float FrameExposure() {
+    float e = g_ExposureB.x;
+    if (g_ExposureB.y > 0.5) {
+        float adapted = g_Adapted.Load(int3(0, 0, 0));
+        e *= clamp(pow(g_ExposureA.x / max(adapted, 1e-5), g_ExposureA.y), g_ExposureA.z, g_ExposureA.w);
+    }
+    return max(e, 1e-4);
+}
+
 float4 EffectMain(PSIn i, float3 v, float2 uv) {
     float4 src  = g_Diffuse.Sample(g_Diffuse_sampler, uv);
     float3 c    = Stored(src.rgb, g_Srgb.x);
@@ -285,7 +301,9 @@ float4 EffectMain(PSIn i, float3 v, float2 uv) {
     if (!AlphaPasses(a, g_Alpha.x, (int)g_Alpha.y)) discard;
 #endif
     c = ApplyFog(c, i.world);
-    return float4(SrgbToLinear(c), g_Alpha.w > 0.5 ? a : 1.0);
+    // An effect keeps its own brightness: the frame's exposure is divided back out, so eye adaptation brightening a dark
+    // interior doesn't blow a glow, a flame or a dust beam out to white.
+    return float4(SrgbToLinear(c) / FrameExposure(), g_Alpha.w > 0.5 ? a : 1.0);
 }
 #endif
 
