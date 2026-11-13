@@ -295,12 +295,12 @@ float4 main(in PSIn i, bool front : SV_IsFrontFace) : SV_Target {
 #if EFFECT
     return EffectMain(i, v, uv);
 #elif REFRACTION
-    // What lies behind, displaced by the normal map's tangent-space xy × strength (a fraction of the frame's height).
+    // What lies behind, displaced by the normal map's tangent-space xy × strength × a tenth of the frame's height.
     uint sw, sh;
     g_SceneColor.GetDimensions(sw, sh);
     float2 offset = float2(0.0, 0.0);
 #if NORMAL_MAP
-    offset = (g_Normal.Sample(g_Normal_sampler, uv).xy * 2.0 - 1.0) * g_EffectScale.y * float(sh);
+    offset = (g_Normal.Sample(g_Normal_sampler, uv).xy * 2.0 - 1.0) * g_EffectScale.y * 0.1 * float(sh);
 #endif
     int2 p = int2(clamp(i.pos.xy + offset, float2(0.0, 0.0), float2(float(sw) - 1.0, float(sh) - 1.0)));
     return g_SceneColor.Load(int3(p, 0));

@@ -1116,8 +1116,8 @@ void TestUvTransform(RenderDevice& dev) {
 
 // ── 5f. Refraction: a surface that shows what lies behind it, displaced by its normal map ──
 // An unlit backdrop, red above the middle and green below, and a refraction quad in front with a blue diffuse it never
-// shows. Flat normals show the backdrop as it is; normals tipped to +Y (strength 0.25 of the frame's height, ~24 px, ~0.87
-// units here) read from below, so a point just above the middle shows green.
+// shows. Flat normals show the backdrop as it is; normals tipped to +Y (strength 2.5: a quarter of the frame's height,
+// ~24 px, ~0.87 units here) read from below, so a point just above the middle shows green.
 void TestRefraction(RenderDevice& dev) {
     std::printf("-- refraction --\n");
     PbrScene s(dev);
@@ -1131,7 +1131,7 @@ void TestRefraction(RenderDevice& dev) {
     glass.model                       = MaterialModel::Lighting;
     glass.diffuse                     = s.r.LoadTextureFromMemory(MakeDds4x4(255, 0, 0, 255), TexColorSpace::Srgb);   // blue
     glass.lighting.refraction         = true;
-    glass.lighting.refractionStrength = 0.25f;
+    glass.lighting.refractionStrength = 2.5f;
     const TextureHandle flatN   = s.r.LoadTextureFromMemory(MakeDds4x4(255, 128, 128, 255), TexColorSpace::Linear);   // (0, 0, 1)
     const TextureHandle tippedN = s.r.LoadTextureFromMemory(MakeDds4x4(128, 255, 128, 255), TexColorSpace::Linear);   // (0, +1, 0)
     auto shoot = [&](TextureHandle normal, glm::vec3 at) {
