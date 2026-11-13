@@ -167,7 +167,9 @@ void DiligentSceneRenderer::Impl::RunPost(ITextureView* outputRTV) {
     PostPipeline& pp = PostFor(outputRTV->GetDesc().Format);
     if (!pp.pso) return;
     {
-        MapHelper<float> cb(context, postCB, MAP_WRITE, MAP_FLAG_DISCARD);
+        MapHelper<float> map;
+        float* cb = MapDiscard(*this, map, postCB);
+        if (!cb) return;
         cb[0] = exposure;
         cb[1] = viewTransform == ViewTransform::Standard ? 1.f : 0.f;
         cb[2] = cb[3] = 0.f;
@@ -243,7 +245,9 @@ void DiligentSceneRenderer::Impl::RunGrid(ITextureView* outputRTV) {
             glm::mat4 viewProj, invViewProj;
             glm::vec4 cameraPos, grid, minor, major, axisX, axisY;
         };
-        MapHelper<GridConstants> cb(context, gridCB, MAP_WRITE, MAP_FLAG_DISCARD);
+        MapHelper<GridConstants> map;
+        GridConstants* cb = MapDiscard(*this, map, gridCB);
+        if (!cb) return;
         cb->viewProj    = viewProj;
         cb->invViewProj = glm::inverse(viewProj);
         cb->cameraPos   = glm::vec4(cameraPos, 1.f);
@@ -300,6 +304,7 @@ void DiligentSceneRenderer::BeginFrame(int width, int height) {
     r.EnsureSceneTargets(std::max(width, 1), std::max(height, 1));
     r.stats   = {};
     r.inFrame = true;
+    r.dynamicExhausted = false;   // the frames before have finished, or will have, by the time this one maps
     r.gridRequested = false;
     r.queue.clear();   // a frame that never ended
     r.queuedBones.clear();
@@ -355,6 +360,13 @@ void DiligentSceneRenderer::EndFrame() {
         OverlayRun(r, out);
     }
     else LogOnce(r.warnedNoOutput, "EndFrame with no output target bound; the frame is not shown");
+    if (r.dynamicExhausted) {
+        ++r.dynamicExhaustedFrames;
+        if (r.dynamicExhaustedFrames <= 3 || r.dynamicExhaustedFrames % 300 == 0)
+            std::fprintf(stderr, "[render] out of dynamic memory: %d draws skipped this frame (%d such frames so far); "
+                                 "raise DeviceOptions::dynamicHeapMB\n",
+                         r.stats.skippedNoMemory, r.dynamicExhaustedFrames);
+    }
 
     r.stats.meshes             = static_cast<int>(r.meshes.size());
     r.stats.textures           = static_cast<int>(r.textures.size());

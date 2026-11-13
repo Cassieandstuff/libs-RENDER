@@ -52,7 +52,15 @@ struct DeviceOptions {
     // Diligent's debug builds stop on a failed assertion with a modal Abort / Retry / Ignore dialog (true, Diligent's own
     // behaviour). A scripted or test run passes false: the assertion is logged as an error and the run goes on.
     bool    assertDialogs = true;
+    // Vulkan's dynamic heap, in MB. Every draw's per-draw constants (a skinned draw's whole bone palette) are written
+    // there, by every viewport, and held until their frame finishes. Fixed at device creation; 0 = kDefaultDynamicHeapMB.
+    // A frame that runs out skips its remaining draws (FrameStats::skippedNoMemory) rather than failing. D3D12 grows its
+    // own heap and ignores this.
+    int     dynamicHeapMB = 0;
 };
+
+// Diligent's own default is 8 MB, which one actor-heavy view beside another viewport outgrows.
+inline constexpr int kDefaultDynamicHeapMB = 64;
 
 // The background shader-compile thread count `opts` asks for (see DeviceOptions).
 unsigned ShaderCompileThreads(const DeviceOptions& opts);
@@ -156,6 +164,7 @@ struct FrameStats {
     int meshes           = 0;   // live meshes
     int textures         = 0;   // live textures
     int failedTextureLoads = 0; // cumulative LoadTexture* failures
+    int skippedNoMemory  = 0;   // draws skipped last frame: the dynamic heap ran out (DeviceOptions::dynamicHeapMB)
 };
 
 // Background and ground-grid look. Colours are display (sRGB-encoded) values, as

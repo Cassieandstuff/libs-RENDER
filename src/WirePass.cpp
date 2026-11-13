@@ -238,15 +238,19 @@ void DrawFlat(DiligentSceneRenderer::Impl& r, WireState& st, TEXTURE_FORMAT form
         WireState::Variant& v = FlatVariant(r, st, format, skinned, wire);
         if (!v.pso || !v.srb) continue;
         {
-            MapHelper<FlatConstants> c(r.context, st.cb, MAP_WRITE, MAP_FLAG_DISCARD);
+            MapHelper<FlatConstants> map;
+            FlatConstants* c = MapDiscard(r, map, st.cb);
+            if (!c) continue;
             c->viewProj = r.viewProj;
             c->world    = d.world;
             c->color    = colorOf(d.surface);
         }
         if (skinned) {
             const Uint32 n = std::min<Uint32>(d.boneCount, kMaxJoints);
-            MapHelper<glm::mat4> b(r.context, st.bonesCB, MAP_WRITE, MAP_FLAG_DISCARD);
-            std::memcpy(static_cast<glm::mat4*>(b), bones.data() + d.boneOffset, n * sizeof(glm::mat4));
+            MapHelper<glm::mat4> map;
+            glm::mat4* b = MapDiscard(r, map, st.bonesCB);
+            if (!b) continue;
+            std::memcpy(b, bones.data() + d.boneOffset, n * sizeof(glm::mat4));
         }
         IBuffer* vbs[6] = { mesh->positions, nullptr, nullptr, nullptr, skinned ? mesh->joints.RawPtr() : nullptr,
                             skinned ? mesh->weights.RawPtr() : nullptr };
@@ -299,21 +303,27 @@ void WireRun(DiligentSceneRenderer::Impl& r, ITextureView* outputRTV) {
                 // Linear colour into the sRGB mask; the edge pass reads it back linear and encodes for the output.
                 DrawFlat(r, *st, kMaskFormat, false, r.outlineDraws, r.outlineBones,
                          [&](const DrawSurface& s) { return Encode(s.outlineColor, true); });
+                bool edgeMapped = false;   // out of dynamic memory (MapDiscard): no edge pass this frame
                 {
-                    MapHelper<int> c(r.context, st->outlineCB, MAP_WRITE, MAP_FLAG_DISCARD);
-                    c[0] = std::clamp(r.style.outlineWidth, 1, 8);
-                    c[1] = r.width;
-                    c[2] = r.height;
-                    c[3] = 0;
+                    MapHelper<int> map;
+                    if (int* c = MapDiscard(r, map, st->outlineCB)) {
+                        c[0] = std::clamp(r.style.outlineWidth, 1, 8);
+                        c[1] = r.width;
+                        c[2] = r.height;
+                        c[3] = 0;
+                        edgeMapped = true;
+                    }
                 }
-                if (auto* var = edge.srb->GetVariableByName(SHADER_TYPE_PIXEL, "g_Mask"))
-                    var->Set(st->mask->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE));
-                r.context->SetRenderTargets(1, &outputRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-                r.context->SetViewports(1, nullptr, 0, 0);
-                r.context->SetPipelineState(edge.pso);
-                r.context->CommitShaderResources(edge.srb, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-                DrawAttribs draw{ 3, DRAW_FLAG_VERIFY_ALL };
-                r.context->Draw(draw);
+                if (edgeMapped) {
+                    if (auto* var = edge.srb->GetVariableByName(SHADER_TYPE_PIXEL, "g_Mask"))
+                        var->Set(st->mask->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE));
+                    r.context->SetRenderTargets(1, &outputRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+                    r.context->SetViewports(1, nullptr, 0, 0);
+                    r.context->SetPipelineState(edge.pso);
+                    r.context->CommitShaderResources(edge.srb, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+                    DrawAttribs draw{ 3, DRAW_FLAG_VERIFY_ALL };
+                    r.context->Draw(draw);
+                }
             }
         }
 

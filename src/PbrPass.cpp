@@ -188,10 +188,13 @@ void BuildIbl(DiligentSceneRenderer::Impl& r, PbrState& st) {
     st.renderer->PrecomputeCubemaps(r.context, pre);
 }
 
-void WriteFrameAttribs(DiligentSceneRenderer::Impl& r, PbrState& st) {
-    MapHelper<Uint8> dst(r.context, st.frameCB, MAP_WRITE, MAP_FLAG_DISCARD);
+// False when the frame is out of dynamic memory (MapDiscard): nothing was written.
+bool WriteFrameAttribs(DiligentSceneRenderer::Impl& r, PbrState& st) {
+    MapHelper<Uint8> map;
+    Uint8* dst = MapDiscard(r, map, st.frameCB);
+    if (!dst) return false;
     std::memset(dst, 0, st.renderer->GetPRBFrameAttribsSize());
-    auto* frame  = reinterpret_cast<HLSL::PBRFrameAttribs*>(static_cast<Uint8*>(dst));
+    auto* frame  = reinterpret_cast<HLSL::PBRFrameAttribs*>(dst);
     auto* lights = reinterpret_cast<HLSL::PBRLightAttribs*>(frame + 1);
 
     HLSL::CameraAttribs& cam = frame->Camera;
@@ -423,7 +426,7 @@ void PbrDraw(DiligentSceneRenderer::Impl& r, const GpuMesh& mesh, const glm::mat
     }
 
     if (st.frameDirty) {
-        WriteFrameAttribs(r, st);
+        if (!WriteFrameAttribs(r, st)) return;
         st.frameDirty = false;
     }
 
@@ -476,7 +479,9 @@ void PbrDraw(DiligentSceneRenderer::Impl& r, const GpuMesh& mesh, const glm::mat
             st.warnedJoints = true;
             std::fprintf(stderr, "[render] skin palette of %zu bones clamped to %u\n", bones.size(), kMaxJoints);
         }
-        MapHelper<Uint8> joints(r.context, pbr.GetJointsBuffer(), MAP_WRITE, MAP_FLAG_DISCARD);
+        MapHelper<Uint8> map;
+        Uint8* joints = MapDiscard(r, map, pbr.GetJointsBuffer());
+        if (!joints) return;
         std::memcpy(joints, bones.data(), jointCount * sizeof(glm::mat4));   // row-major packing: raw glm bytes
     }
     {
@@ -487,12 +492,16 @@ void PbrDraw(DiligentSceneRenderer::Impl& r, const GpuMesh& mesh, const glm::mat
         attribs.NodeMatrix    = &node;
         attribs.JointCount    = jointCount;
         attribs.FallbackColor = &fallback;
-        MapHelper<Uint8> prim(r.context, pbr.GetPBRPrimitiveAttribsCB(), MAP_WRITE, MAP_FLAG_DISCARD);
+        MapHelper<Uint8> map;
+        Uint8* prim = MapDiscard(r, map, pbr.GetPBRPrimitiveAttribsCB());
+        if (!prim) return;
         GLTF_PBR_Renderer::WritePBRPrimitiveShaderAttribs(prim, attribs, /*TransposeMatrices*/ false, /*UseSkinPreTransform*/ false,
                                                           PBR_Renderer::VERTEX_POS_PACK_MODE_NONE, 0);
     }
     {
-        MapHelper<Uint8> mat(r.context, pbr.GetPBRMaterialAttribsCB(), MAP_WRITE, MAP_FLAG_DISCARD);
+        MapHelper<Uint8> map;
+        Uint8* mat = MapDiscard(r, map, pbr.GetPBRMaterialAttribsCB());
+        if (!mat) return;
         WriteMaterialAttribs(mat, flags, m, alpha);
     }
 

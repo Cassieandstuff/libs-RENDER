@@ -224,8 +224,8 @@ void Upload(DiligentSceneRenderer::Impl& r, GrowBuffer& gb, const void* data, st
             return;
         }
     }
-    MapHelper<std::uint8_t> dst(r.context, gb.buf, MAP_WRITE, MAP_FLAG_DISCARD);
-    std::memcpy(dst, data, bytes);
+    MapHelper<std::uint8_t> map;
+    if (std::uint8_t* dst = MapDiscard(r, map, gb.buf)) std::memcpy(dst, data, bytes);
 }
 
 } // namespace
@@ -251,7 +251,9 @@ void OverlayRun(DiligentSceneRenderer::Impl& r, ITextureView* outputRTV) {
             continue;
         }
         {
-            MapHelper<OverlayCB> cb(r.context, o.cb, MAP_WRITE, MAP_FLAG_DISCARD);
+            MapHelper<OverlayCB> map;
+            OverlayCB* cb = MapDiscard(r, map, o.cb);
+            if (!cb) return;
             const float w = static_cast<float>(od.Width), h = static_cast<float>(od.Height);
             cb->viewProj = r.viewProj;
             cb->viewport = { w, h, 1.f / w, 1.f / h };

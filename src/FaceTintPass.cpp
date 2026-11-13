@@ -110,9 +110,13 @@ TextureHandle FaceTintComposite(DiligentSceneRenderer::Impl& r, TextureHandle ba
     if (!baseVar || !curVar || !maskVar || !tintVar) return TextureHandle::Invalid;
 
     ITextureView* baseSrv = b->texture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+    if (!r.inFrame) r.dynamicExhausted = false;   // between frames: what the last frame held may have come back
+    // False when out of dynamic memory (MapDiscard): nothing was drawn.
     auto pass = [&](ITexture* target, ITextureView* current, ITextureView* mask, ITextureView* tintMap, const TintCB& c) {
         {
-            MapHelper<TintCB> cb(r.context, st->cb, MAP_WRITE, MAP_FLAG_DISCARD);
+            MapHelper<TintCB> map;
+            TintCB* cb = MapDiscard(r, map, st->cb);
+            if (!cb) return false;
             *cb = c;
         }
         ITextureView* rtv = target->GetDefaultView(TEXTURE_VIEW_RENDER_TARGET);
@@ -126,12 +130,14 @@ TextureHandle FaceTintComposite(DiligentSceneRenderer::Impl& r, TextureHandle ba
         r.context->CommitShaderResources(st->srb, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
         DrawAttribs draw{ 3, DRAW_FLAG_VERIFY_ALL };
         r.context->Draw(draw);
+        return true;
     };
 
     // Pass 0: copy the base into the accumulator.
-    pass(src, baseSrv, baseSrv, baseSrv, TintCB{ { 0, 0, 0, 0 }, { 0, 0, 0, 1 }, { 0, 0, 0, 0 } });
+    bool drawn = pass(src, baseSrv, baseSrv, baseSrv, TintCB{ { 0, 0, 0, 0 }, { 0, 0, 0, 1 }, { 0, 0, 0, 0 } });
 
     for (const FaceTintLayer& layer : layers) {
+        if (!drawn) break;
         // A layer may be maskless (full coverage, e.g. body skin tone); an
         // unresolvable mask or tint map skips the layer.
         ITextureView* mask = nullptr;
@@ -153,8 +159,12 @@ TextureHandle FaceTintComposite(DiligentSceneRenderer::Impl& r, TextureHandle ba
                          { static_cast<int>(layer.blend), layer.coverageFromAlpha ? 1 : 0, mask ? 1 : 0, 0 },
                          { tintMap ? 1 : 0, 0, 0, 0 } };
         // The accumulator is a harmless bind for an absent mask / tint map.
-        pass(dst, cur, mask ? mask : cur, tintMap ? tintMap : cur, c);
+        drawn = pass(dst, cur, mask ? mask : cur, tintMap ? tintMap : cur, c);
         std::swap(src, dst);   // result now in src
+    }
+    if (!drawn) {   // out of dynamic memory: no composite, as for any other failure
+        if (r.inFrame) r.BindSceneTargets();
+        return TextureHandle::Invalid;
     }
 
     r.context->GenerateMips(src->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE));

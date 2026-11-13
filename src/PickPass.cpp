@@ -243,7 +243,9 @@ void PickRun(DiligentSceneRenderer::Impl& r) {
         PickState::Variant& v = VariantFor(r, *st, skinned, alphaCut, s.twoSided || s.xray);
         if (!v.pso || !v.srb) continue;
         {
-            MapHelper<PickConstants> c(r.context, st->cb, MAP_WRITE, MAP_FLAG_DISCARD);
+            MapHelper<PickConstants> map;
+            PickConstants* c = MapDiscard(r, map, st->cb);
+            if (!c) continue;
             c->viewProj = r.viewProj;
             c->world    = d.world;
             // Tested surfaces cut where the eye sees a hole; blended ones where they are nearly clear.
@@ -253,8 +255,10 @@ void PickRun(DiligentSceneRenderer::Impl& r) {
         }
         if (skinned) {
             const Uint32 n = std::min<Uint32>(d.boneCount, kMaxJoints);
-            MapHelper<glm::mat4> b(r.context, st->bonesCB, MAP_WRITE, MAP_FLAG_DISCARD);
-            std::memcpy(static_cast<glm::mat4*>(b), r.pickBones.data() + d.boneOffset, n * sizeof(glm::mat4));
+            MapHelper<glm::mat4> map;
+            glm::mat4* b = MapDiscard(r, map, st->bonesCB);
+            if (!b) continue;
+            std::memcpy(b, r.pickBones.data() + d.boneOffset, n * sizeof(glm::mat4));
         }
         if (v.diffuse) v.diffuse->Set(diffuse->srv);
         IBuffer* vbs[6] = { mesh->positions, nullptr, mesh->uvs, nullptr, skinned ? mesh->joints.RawPtr() : nullptr,

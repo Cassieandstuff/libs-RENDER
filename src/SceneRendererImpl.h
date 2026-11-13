@@ -11,6 +11,7 @@
 #include "Internal.h"
 
 #include "Buffer.h"
+#include "MapHelper.hpp"
 #include "PipelineState.h"
 #include "ShaderResourceBinding.h"
 #include "TextureView.h"
@@ -196,10 +197,31 @@ struct DiligentSceneRenderer::Impl {
 
     FrameStats stats, lastStats;
 
+    // ── Dynamic memory ──
+    // Set when a dynamic buffer could not be mapped (Vulkan's dynamic heap, DeviceOptions::dynamicHeapMB, used up): the
+    // rest of the frame's draws are skipped (MapDiscard) instead of written through a null map. BeginFrame clears it.
+    bool dynamicExhausted       = false;
+    int  dynamicExhaustedFrames = 0;   // frames that ran out, for the log
+
     // Shader helper: compile HLSL source with combined texture samplers.
     RefCntAutoPtr<Diligent::IShader> CompileShader(const char* name, Diligent::SHADER_TYPE type, const char* source,
                                                    const Diligent::ShaderMacro* macros = nullptr, Diligent::Uint32 numMacros = 0);
 };
+
+// Maps `buffer` (USAGE_DYNAMIC) for writing, discarding its old contents; `m` unmaps it when it goes out of scope. Null
+// once the frame has run out of dynamic memory, and the caller then skips its draw. After the first failure the frame
+// stops asking: Diligent stalls each failed request for ~60 ms and idles the GPU.
+template <class T>
+T* MapDiscard(DiligentSceneRenderer::Impl& r, Diligent::MapHelper<T>& m, Diligent::IBuffer* buffer) {
+    if (!buffer) return nullptr;
+    if (!r.dynamicExhausted) {
+        m.Map(r.context, buffer, Diligent::MAP_WRITE, Diligent::MAP_FLAG_DISCARD);
+        if (T* p = m) return p;
+        r.dynamicExhausted = true;
+    }
+    ++r.stats.skippedNoMemory;
+    return nullptr;
+}
 
 // Pass lifecycles / hooks implemented in their own files.
 PbrPtr CreatePbrState(DiligentSceneRenderer::Impl& r);

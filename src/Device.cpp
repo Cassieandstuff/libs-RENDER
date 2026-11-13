@@ -79,6 +79,8 @@ bool TryCreate(Backend backend, const DeviceOptions& opts, RenderDevice::Impl& o
         factory->SetMessageCallback(OnDiligentMessage);
         EngineVkCreateInfo ci;
         RequestFeatures(ci, opts);
+        const int heapMB   = opts.dynamicHeapMB > 0 ? std::min(opts.dynamicHeapMB, 2048) : kDefaultDynamicHeapMB;
+        ci.DynamicHeapSize = static_cast<Uint32>(heapMB) << 20;
         factory->CreateDeviceAndContextsVk(ci, &out.device, &out.context);
         out.factory = factory;
     }

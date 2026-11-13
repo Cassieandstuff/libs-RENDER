@@ -1176,6 +1176,33 @@ void TestEffectExposure(RenderDevice& dev) {
     check("exposure x4 leaves an effect as it was", Near(exposed.r, plain.r, 3));
 }
 
+// Run on a device made with a 1 MB dynamic heap (Vulkan): a frame of more draws than it holds skips the rest and says so,
+// instead of writing through a null map, and the next frame draws again.
+void TestDynamicHeapExhaustion(RenderDevice& dev) {
+    std::printf("-- dynamic heap exhaustion --\n");
+    PbrScene s(dev);
+    s.r.SetViewTransform(ViewTransform::Standard);
+    const MeshHandle quad = s.r.UploadMesh(MakeQuad(0.f));
+    DrawSurface fx;
+    fx.model            = MaterialModel::Effect;
+    fx.effect.baseColor = { 0.25f, 0.25f, 0.25f, 1.f };
+    (void)s.Render([&](auto& r) { r.DrawMesh(quad, glm::mat4(1.f), fx); });   // the pipeline compiled
+
+    constexpr int kDraws = 8000;   // a 256-byte constant block each: 2 MB, twice the heap
+    s.r.BeginFrame(PbrScene::W, PbrScene::H);
+    s.r.SetCamera(s.view, s.proj);
+    for (int i = 0; i < kDraws; ++i) s.r.DrawMesh(quad, glm::mat4(1.f), fx);
+    s.r.EndFrame();
+    dev.FinishFrame();
+    const FrameStats over = s.r.LastFrameStats();
+    std::printf("   %d draws: %d drawn, %d skipped for memory\n", kDraws, over.draws, over.skippedNoMemory);
+    check("a frame past the heap skips draws instead of failing", over.skippedNoMemory > 0);
+
+    const Rgba after = s.At(s.Render([&](auto& r) { r.DrawMesh(quad, glm::mat4(1.f), fx); }), glm::vec3(0.f));
+    std::printf("   next frame: skipped %d, centre (%d,%d,%d)\n", s.r.LastFrameStats().skippedNoMemory, after.r, after.g, after.b);
+    check("the next frame draws again", s.r.LastFrameStats().skippedNoMemory == 0 && Near(after.r, 64, 3));
+}
+
 // ── 5c'''. Image space: adaptation, tone, grade, bloom ───────────────────────────
 // A Lighting quad lit to a known display value (0.7: linear 0.448), as in TestLightingModel.
 void TestImageSpace(RenderDevice& dev) {
@@ -2226,6 +2253,16 @@ int main(int argc, char** argv) {
     TestOverlayDepth(*dev);
     TestOverlayText(*dev);
     TestOverlaySkeleton(*dev);
+
+    // Last, on a device of its own (one device at a time): Vulkan's dynamic heap shrunk to 1 MB. D3D12 grows its own.
+    if (opts.preferred == Backend::Vulkan) {
+        dev.reset();
+        DeviceOptions small = opts;
+        small.dynamicHeapMB = 1;
+        auto tiny = RenderDevice::Create(small, &log);
+        check("a device with a 1 MB dynamic heap", tiny != nullptr);
+        if (tiny) TestDynamicHeapExhaustion(*tiny);
+    }
 
     std::printf(g_failures == 0 ? "\nALL PASSED\n" : "\n%d CHECK(S) FAILED\n", g_failures);
     return g_failures;

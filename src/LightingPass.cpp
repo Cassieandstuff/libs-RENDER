@@ -313,10 +313,13 @@ bool PrepareVariant(LightingState& st, LightingState::Variant& var, bool skinned
     return true;
 }
 
-void WriteFrame(DiligentSceneRenderer::Impl& r, LightingState& st) {
-    MapHelper<FrameConstants> f(r.context, st.frameCB, MAP_WRITE, MAP_FLAG_DISCARD);
+// False when the frame is out of dynamic memory (MapDiscard): nothing was written.
+bool WriteFrame(DiligentSceneRenderer::Impl& r, LightingState& st) {
+    MapHelper<FrameConstants> map;
+    FrameConstants* f = MapDiscard(r, map, st.frameCB);
+    if (!f) return false;
     const SceneEnvironment& e = r.environment;
-    std::memset(static_cast<FrameConstants*>(f), 0, sizeof(FrameConstants));
+    std::memset(f, 0, sizeof(FrameConstants));
     f->viewProj  = r.viewProj;
     f->cameraPos = glm::vec4(r.cameraPos, 1.f);
     f->sunDir    = glm::vec4(glm::normalize(e.sunDirection), 0.f);
@@ -468,11 +471,13 @@ void LightingDraw(DiligentSceneRenderer::Impl& r, const GpuMesh& mesh, const glm
     if (!PrepareVariant(*st, var, skinned)) return;
 
     if (st->frameDirty) {
-        WriteFrame(r, *st);
+        if (!WriteFrame(r, *st)) return;
         st->frameDirty = false;
     }
     {
-        MapHelper<DrawConstants> d(r.context, st->drawCB, MAP_WRITE, MAP_FLAG_DISCARD);
+        MapHelper<DrawConstants> map;
+        DrawConstants* d = MapDiscard(r, map, st->drawCB);
+        if (!d) return;
         d->world     = world;
         d->tint      = s.tint;
         if (s.xray) d->tint.a = 0.35f;
@@ -494,8 +499,10 @@ void LightingDraw(DiligentSceneRenderer::Impl& r, const GpuMesh& mesh, const glm
             st->warnedJoints = true;
             std::fprintf(stderr, "[render] skin palette of %zu bones clamped to %u\n", bones.size(), kMaxJoints);
         }
-        MapHelper<glm::mat4> b(r.context, st->bonesCB, MAP_WRITE, MAP_FLAG_DISCARD);
-        std::memcpy(static_cast<glm::mat4*>(b), bones.data(), n * sizeof(glm::mat4));
+        MapHelper<glm::mat4> map;
+        glm::mat4* b = MapDiscard(r, map, st->bonesCB);
+        if (!b) return;
+        std::memcpy(b, bones.data(), n * sizeof(glm::mat4));
     }
 
     // Textures: what the variant reads; a missing optional map never reaches here (its feature is off).

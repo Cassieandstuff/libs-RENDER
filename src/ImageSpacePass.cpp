@@ -314,9 +314,12 @@ bool ImageSpacePost(DiligentSceneRenderer::Impl& r, ITextureView* outputRTV) {
     // The threshold is a display value; the bright pass compares linear luminance.
     const float threshold = SrgbToLinear(std::clamp(is.bloomThreshold, 0.f, 1.f)) * std::max(1.f, is.bloomThreshold);
     const float sigma     = std::max(is.bloomRadius, 0.f) * (static_cast<float>(r.height) / 1080.f) * 0.5f / 2.f;   // half size, σ = radius / 2
+    // False when out of dynamic memory (MapDiscard): the pass then gives up and the plain post pass is tried.
     auto write = [&](float stepX, float stepY, glm::vec2 blurSize) {
-        MapHelper<IsConstants> c(r.context, st->cb, MAP_WRITE, MAP_FLAG_DISCARD);
-        c->a          = { std::max(is.adaptKey, 1e-5f), std::clamp(is.adaptStrength, 0.f, 4.f), is.minExposure, is.maxExposure };
+        MapHelper<IsConstants> map;
+        IsConstants* c = MapDiscard(r, map, st->cb);
+        if (!c) return false;
+        c->a         = { std::max(is.adaptKey, 1e-5f), std::clamp(is.adaptStrength, 0.f, 4.f), is.minExposure, is.maxExposure };
         c->b          = { blend, static_cast<float>(st->lumMips - 1), st->first ? 1.f : 0.f, r.exposure };
         c->c          = { threshold, sigma, stepX, stepY };
         c->d          = { is.white, std::max(is.bloomScale, 0.f), is.saturation, is.brightness };
@@ -324,11 +327,12 @@ bool ImageSpacePost(DiligentSceneRenderer::Impl& r, ITextureView* outputRTV) {
         c->tint       = glm::vec4(is.tintColor, 0.f);
         c->background = { SrgbToLinear(r.style.background[0]), SrgbToLinear(r.style.background[1]), SrgbToLinear(r.style.background[2]), 1.f };
         c->size       = { static_cast<float>(r.width), static_cast<float>(r.height), blurSize.x, blurSize.y };
+        return true;
     };
     const glm::vec2 bloomSize(static_cast<float>(st->bloomW), static_cast<float>(st->bloomH));
 
     // 1. Luminance, mipped to its mean.
-    write(0.f, 0.f, bloomSize);
+    if (!write(0.f, 0.f, bloomSize)) return false;
     Bind(st->lum, "g_HDR", r.hdrColor);
     Fullscreen(r, st->lumTex, st->lum);
     r.context->GenerateMips(st->lumTex->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE));
@@ -347,10 +351,10 @@ bool ImageSpacePost(DiligentSceneRenderer::Impl& r, ITextureView* outputRTV) {
         Bind(st->bright, "g_HDR", r.hdrColor);
         Bind(st->bright, "g_Adapted", adapted);
         Fullscreen(r, st->bloomA, st->bright);
-        write(1.f, 0.f, bloomSize);
+        if (!write(1.f, 0.f, bloomSize)) return false;
         Bind(st->blur, "g_Src", st->bloomA);
         Fullscreen(r, st->bloomB, st->blur);
-        write(0.f, 1.f, bloomSize);
+        if (!write(0.f, 1.f, bloomSize)) return false;
         Bind(st->blur, "g_Src", st->bloomB);
         Fullscreen(r, st->bloomA, st->blur);
     } else {
@@ -361,7 +365,7 @@ bool ImageSpacePost(DiligentSceneRenderer::Impl& r, ITextureView* outputRTV) {
     }
 
     // 4. Post into the output.
-    write(0.f, 0.f, bloomSize);
+    if (!write(0.f, 0.f, bloomSize)) return false;
     Bind(post, "g_HDR", r.hdrColor);
     Bind(post, "g_Adapted", adapted);
     Bind(post, "g_Bloom", st->bloomA);
