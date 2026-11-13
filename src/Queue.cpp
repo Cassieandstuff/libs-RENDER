@@ -5,6 +5,7 @@
 //   blended         back to front by the mesh bounds' centre, the order Skyrim's
 //                   alpha accumulator uses; a noSort draw keeps the depth of the
 //                   blended draw submitted before it, so it stays right after it
+//   refraction      back to front, last, over a copy of the scene colour as it stood
 // Ties keep submission order. The bone palettes are copied into the queue, so the
 // caller's spans need only live through the Draw call.
 #include "SceneRendererImpl.h"
@@ -18,6 +19,7 @@ namespace {
 int BucketOf(const DrawSurface& s) {
     using Blend = DrawSurface::BlendMode;
     if (s.xray) return 2;
+    if (s.model == MaterialModel::Lighting && s.lighting.refraction) return 3;
     switch (s.blendMode) {
         case Blend::Opaque: return 0;
         case Blend::AlphaTest: return 1;
@@ -65,7 +67,7 @@ void DiligentSceneRenderer::Impl::FlushQueue() {
     for (const QueuedDraw& d : queue) order.push_back(&d);
     std::stable_sort(order.begin(), order.end(), [](const QueuedDraw* a, const QueuedDraw* b) {
         if (a->bucket != b->bucket) return a->bucket < b->bucket;
-        return a->bucket == 2 ? a->depth > b->depth : a->depth < b->depth;
+        return a->bucket >= 2 ? a->depth > b->depth : a->depth < b->depth;
     });
 
     // A soft effect reads the depth of what lies behind it: copy the scene depth once the opaque and tested draws are in.
@@ -82,9 +84,30 @@ void DiligentSceneRenderer::Impl::FlushQueue() {
             device->CreateTexture(desc, nullptr, &sceneDepthCopy);
         }
     }
-    bool copied = false;
+    // A refraction surface shows the scene behind it: copy the colour once everything else is in.
+    const bool refracts = std::ranges::any_of(order, [](const QueuedDraw* d) { return d->bucket == 3; });
+    if (refracts) {
+        const Diligent::TextureDesc& cd = hdrColor->GetDesc();
+        if (!sceneColorCopy || sceneColorCopy->GetDesc().Width != cd.Width || sceneColorCopy->GetDesc().Height != cd.Height) {
+            Diligent::TextureDesc desc = cd;
+            desc.Name      = "render scene colour copy";
+            desc.MipLevels = 1;
+            desc.BindFlags = Diligent::BIND_SHADER_RESOURCE;
+            desc.MiscFlags = Diligent::MISC_TEXTURE_FLAG_NONE;
+            sceneColorCopy.Release();
+            device->CreateTexture(desc, nullptr, &sceneColorCopy);
+        }
+    }
+    bool copied = false, colourCopied = false;
     BindSceneTargets();
     for (const QueuedDraw* d : order) {
+        if (refracts && !colourCopied && d->bucket == 3 && sceneColorCopy) {
+            Diligent::CopyTextureAttribs copy{ hdrColor, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION, sceneColorCopy,
+                                               Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION };
+            context->CopyTexture(copy);
+            BindSceneTargets();
+            colourCopied = true;
+        }
         if (soft && !copied && d->bucket == 2 && sceneDepthCopy) {
             Diligent::CopyTextureAttribs copy{ hdrDepth, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION, sceneDepthCopy,
                                                Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION };

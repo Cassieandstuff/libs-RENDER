@@ -1114,6 +1114,46 @@ void TestUvTransform(RenderDevice& dev) {
     }
 }
 
+// ── 5f. Refraction: a surface that shows what lies behind it, displaced by its normal map ──
+// An unlit backdrop, red above the middle and green below, and a refraction quad in front with a blue diffuse it never
+// shows. Flat normals show the backdrop as it is; normals tipped to +Y (strength 0.25 of the frame's height, ~24 px, ~0.87
+// units here) read from below, so a point just above the middle shows green.
+void TestRefraction(RenderDevice& dev) {
+    std::printf("-- refraction --\n");
+    PbrScene s(dev);
+    s.r.SetViewTransform(ViewTransform::Standard);
+    const MeshHandle back  = s.r.UploadMesh(MakeQuad(0.f));
+    const MeshHandle front = s.r.UploadMesh(MakeQuad(0.05f));
+    DrawSurface backdrop;
+    backdrop.model   = MaterialModel::Effect;
+    backdrop.diffuse = s.r.LoadTextureFromMemory(MakeDdsRows({ 0, 0, 255, 255 }, { 0, 255, 0, 255 }), TexColorSpace::Srgb);
+    DrawSurface glass;
+    glass.model                       = MaterialModel::Lighting;
+    glass.diffuse                     = s.r.LoadTextureFromMemory(MakeDds4x4(255, 0, 0, 255), TexColorSpace::Srgb);   // blue
+    glass.lighting.refraction         = true;
+    glass.lighting.refractionStrength = 0.25f;
+    const TextureHandle flatN   = s.r.LoadTextureFromMemory(MakeDds4x4(255, 128, 128, 255), TexColorSpace::Linear);   // (0, 0, 1)
+    const TextureHandle tippedN = s.r.LoadTextureFromMemory(MakeDds4x4(128, 255, 128, 255), TexColorSpace::Linear);   // (0, +1, 0)
+    auto shoot = [&](TextureHandle normal, glm::vec3 at) {
+        glass.normalMap = normal;
+        // The refraction quad is submitted first: it is drawn last whatever the order.
+        return s.At(s.Render([&](auto& r) {
+            r.DrawMesh(front, glm::mat4(1.f), glass);
+            r.DrawMesh(back, glm::mat4(1.f), backdrop);
+        }), at);
+    };
+    const Rgba top    = shoot(flatN, glm::vec3(0.f, 0.5f, 0.f));
+    const Rgba bottom = shoot(flatN, glm::vec3(0.f, -0.5f, 0.f));
+    const Rgba bent   = shoot(tippedN, glm::vec3(0.f, 0.2f, 0.f));
+    const Rgba plain  = shoot(flatN, glm::vec3(0.f, 0.2f, 0.f));
+    std::printf("   flat: top (%d,%d,%d) bottom (%d,%d,%d); at y 0.2 flat (%d,%d,%d) tipped (%d,%d,%d)\n", top.r, top.g, top.b, bottom.r,
+                bottom.g, bottom.b, plain.r, plain.g, plain.b, bent.r, bent.g, bent.b);
+    check("a refraction surface with flat normals shows what is behind it, not its own colour",
+          top.r > 200 && top.g < 40 && top.b < 40 && bottom.g > 200 && bottom.r < 40 && bottom.b < 40);
+    check("just above the middle it shows red", plain.r > 150 && plain.g < 100);
+    check("normals tipped to +Y show what lies below (green)", bent.g > 150 && bent.r < 100);
+}
+
 // ── 5c'''. Image space: adaptation, tone, grade, bloom ───────────────────────────
 // A Lighting quad lit to a known display value (0.7: linear 0.448), as in TestLightingModel.
 void TestImageSpace(RenderDevice& dev) {
@@ -2149,6 +2189,7 @@ int main(int argc, char** argv) {
     TestImagePasses(*dev);
     TestImagePassMarathon(*dev);
     TestUvTransform(*dev);
+    TestRefraction(*dev);
     TestImageSpace(*dev);
     TestPick(*dev);
     TestUpdateMesh(*dev);

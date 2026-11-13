@@ -59,7 +59,7 @@ cbuffer LightingDraw {
     float4   g_EffectColor;          // Effect: base colour rgb, alpha
     float4   g_Falloff;              // Effect: start, stop (cosines), start opacity, stop opacity
     float4   g_EffectFlags;          // Effect: soft depth, palette colour, palette alpha, palette sRGB
-    float4   g_EffectScale;          // Effect: x = base colour scale
+    float4   g_EffectScale;          // x = an effect's base colour scale, y = refraction strength
 };
 )";
 
@@ -157,6 +157,9 @@ Texture2D<float4> g_Palette;      SamplerState g_Palette_sampler;
 #endif
 #if SOFT_DEPTH
 Texture2D<float>  g_SceneDepth;
+#endif
+#if REFRACTION
+Texture2D<float4> g_SceneColor;   // the scene as it stood before the refraction surfaces
 #endif
 
 struct PSIn {
@@ -291,6 +294,16 @@ float4 main(in PSIn i, bool front : SV_IsFrontFace) : SV_Target {
     float2 uv = i.uv;
 #if EFFECT
     return EffectMain(i, v, uv);
+#elif REFRACTION
+    // What lies behind, displaced by the normal map's tangent-space xy × strength (a fraction of the frame's height).
+    uint sw, sh;
+    g_SceneColor.GetDimensions(sw, sh);
+    float2 offset = float2(0.0, 0.0);
+#if NORMAL_MAP
+    offset = (g_Normal.Sample(g_Normal_sampler, uv).xy * 2.0 - 1.0) * g_EffectScale.y * float(sh);
+#endif
+    int2 p = int2(clamp(i.pos.xy + offset, float2(0.0, 0.0), float2(float(sw) - 1.0, float(sh) - 1.0)));
+    return g_SceneColor.Load(int3(p, 0));
 #else
     float3 gn = normalize(i.nrm) * (front ? 1.0 : -1.0);
 

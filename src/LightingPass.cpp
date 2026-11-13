@@ -52,12 +52,13 @@ enum Feature : std::uint32_t {
     kPalette          = 1u << 20,
     kFalloff          = 1u << 21,
     kSoftDepth        = 1u << 22,
+    kRefraction       = 1u << 23,
 };
 constexpr const char* kFeatureMacros[] = {
     "SKINNED", "VERTEX_COLORS", "NORMAL_MAP", "MODEL_SPACE_NORMALS", "SPEC_NORMAL_ALPHA", "SPEC_MAP",
     "GLOW_MAP", "OWN_EMIT", "ENV_MAP", "ENV_MASK", "ENV_MASK_NORMAL_ALPHA", "RIM_LIGHT", "SOFT_LIGHT",
     "LIGHTING_MAP", "BACK_LIGHT", "BACK_LIGHT_MAP", "PARALLAX", "ALPHA_TEST", "VERTEX_TANGENTS",
-    "EFFECT", "PALETTE", "FALLOFF", "SOFT_DEPTH",
+    "EFFECT", "PALETTE", "FALLOFF", "SOFT_DEPTH", "REFRACTION",
 };
 constexpr int kNumFeatures = static_cast<int>(std::size(kFeatureMacros));
 
@@ -128,6 +129,7 @@ constexpr TextureSlot kSlots[] = {
     { "g_Height", kParallax },
     { "g_Palette", kPalette },
     { "g_SceneDepth", kSoftDepth },
+    { "g_SceneColor", kRefraction },
 };
 constexpr std::size_t kNumSlots = std::size(kSlots);
 
@@ -271,8 +273,9 @@ LightingState::Variant& VariantFor(DiligentSceneRenderer::Impl& r, LightingState
     if (fixed.clampV) aniso.AddressV = TEXTURE_ADDRESS_CLAMP;
     for (const TextureSlot& slot : kSlots) {
         if (slot.gate && !(features & slot.gate)) continue;
+        if ((features & kRefraction) && std::strcmp(slot.name, "g_Diffuse") == 0) continue;   // shows the scene, not itself
         vars.push_back({ SHADER_TYPE_PIXEL, slot.name, SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC });
-        if (std::strcmp(slot.name, "g_SceneDepth") == 0) continue;   // read with Load: no sampler
+        if (std::strcmp(slot.name, "g_SceneDepth") == 0 || std::strcmp(slot.name, "g_SceneColor") == 0) continue;   // Load: no sampler
         const bool clamped = std::strcmp(slot.name, "g_Env") == 0 || std::strcmp(slot.name, "g_Palette") == 0;
         samplers.push_back({ SHADER_TYPE_PIXEL, slot.name, clamped ? Sam_LinearClamp : aniso });
     }
@@ -422,6 +425,12 @@ void LightingDraw(DiligentSceneRenderer::Impl& r, const GpuMesh& mesh, const glm
         if (E.softDepth > 0.f && blended && r.sceneDepthCopy) f |= kSoftDepth;
     }
     if (tested) f |= kAlphaTest;
+    // A refraction surface reads only its normal map and the scene colour behind it.
+    const bool refracts = s.model == MaterialModel::Lighting && L.refraction;
+    if (refracts) {
+        if (!r.sceneColorCopy) return;   // nothing to show through
+        f = (f & (kSkinned | kVertexColors | kNormalMap)) | kRefraction;
+    }
 
     FixedState fixed;
     fixed.blend      = blended;
@@ -434,6 +443,10 @@ void LightingDraw(DiligentSceneRenderer::Impl& r, const GpuMesh& mesh, const glm
     fixed.wireframe  = s.wireframe && r.owner.supportsWireframe();
     fixed.clampU     = s.clampU;
     fixed.clampV     = s.clampV;
+    if (refracts) {
+        fixed.blend      = false;   // it is the scene behind, displaced
+        fixed.depthWrite = false;
+    }
     if (!fixed.blend) fixed.src = fixed.dst = BlendFactor::One;   // irrelevant: one key
 
     LightingState::Variant& var = VariantFor(r, *st, f, fixed);
@@ -463,7 +476,7 @@ void LightingDraw(DiligentSceneRenderer::Impl& r, const GpuMesh& mesh, const glm
         auto srgb    = [](const GpuTexture* t) { return t && t->srgb ? 1.f : 0.f; };
         d->srgb      = { srgb(diffuse), srgb(glow), srgb(env), srgb(backMap) };
         d->effectColor = E.baseColor;
-        d->effectScale = { E.baseColorScale, 0.f, 0.f, 0.f };
+        d->effectScale = { E.baseColorScale, L.refractionStrength, 0.f, 0.f };
         d->falloff     = { E.falloffStartAngle, E.falloffStopAngle, E.falloffStartOpacity, E.falloffStopOpacity };
         d->effectFlags = { E.softDepth, E.paletteColor ? 1.f : 0.f, E.paletteAlpha ? 1.f : 0.f, srgb(palette) };    }
     if (skinned) {
@@ -479,11 +492,12 @@ void LightingDraw(DiligentSceneRenderer::Impl& r, const GpuMesh& mesh, const glm
     // Textures: what the variant reads; a missing optional map never reaches here (its feature is off).
     ITextureView* white = st->white->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
     ITextureView* flat  = st->flatNormal->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
-    const GpuTexture* bound[kNumSlots] = { diffuse, normal, specular, glow, env, envMask, lightMap, backMap, height, palette, nullptr };
+    const GpuTexture* bound[kNumSlots] = { diffuse, normal, specular, glow, env, envMask, lightMap, backMap, height, palette, nullptr, nullptr };
     for (std::size_t i = 0; i < kNumSlots; ++i) {
         if (!var.textures[i]) continue;
         ITextureView* view = bound[i] ? bound[i]->srv.RawPtr() : (i == 1 ? flat : white);
         if (std::strcmp(kSlots[i].name, "g_SceneDepth") == 0) view = r.sceneDepthCopy->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+        if (std::strcmp(kSlots[i].name, "g_SceneColor") == 0) view = r.sceneColorCopy->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
         var.textures[i]->Set(view);
     }
 

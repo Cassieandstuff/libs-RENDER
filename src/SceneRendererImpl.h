@@ -185,6 +185,8 @@ struct DiligentSceneRenderer::Impl {
 
     // The scene depth as it stood before the blended draws, for soft effects (copied by FlushQueue when one asks).
     RefCntAutoPtr<Diligent::ITexture> sceneDepthCopy;
+    // The scene colour as it stood before the refraction surfaces (copied by FlushQueue when one is queued).
+    RefCntAutoPtr<Diligent::ITexture> sceneColorCopy;
 
     // ── Draw queue (Queue.cpp) ──
     std::vector<QueuedDraw> queue;

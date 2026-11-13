@@ -124,6 +124,13 @@ struct LightingParams {
     // Parallax: offset the UVs by heightMap (red channel) along the view direction.
     TextureHandle heightMap      = TextureHandle::Invalid;
     float         parallaxScale  = 0.04f;
+    // Refraction (SLSF1_Refraction: a fire's heat haze, a spell's shimmer): the surface
+    // shows what lies behind it instead of its own colour, displaced in screen space by
+    // its normal map's xy (tangent space, −1..1) × refractionStrength, a fraction of the
+    // frame's height. Drawn after every other surface (opaque, tested and blended); it
+    // writes no depth, and its blend mode and other lighting are ignored.
+    bool          refraction         = false;
+    float         refractionStrength = 0.f;
     // (The texture coordinate transform is DrawSurface's: uvOffset / uvScale.)
 };
 
