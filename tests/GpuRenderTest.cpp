@@ -1088,7 +1088,10 @@ void TestUvTransform(RenderDevice& dev) {
         DrawSurface base;
         base.model   = mdl.model;
         base.diffuse = rows;
-        auto at = [&](const DrawSurface& surface, float y) {
+        // The test light faces the camera, so the Lighting model's default white specular lobe (strength 1, gloss 80)
+        // washes the quad's centre toward white ((255,240,240) for red): off, the pixel is the texture's colour alone.
+        if (mdl.model == MaterialModel::Lighting) base.specularStrength = 0.f;
+        auto at =[&](const DrawSurface& surface, float y) {
             return s.At(s.Render([&](auto& r) { r.DrawMesh(quad, glm::mat4(1.f), surface); }), glm::vec3(0.f, y, 0.f));
         };
         const Rgba plain = at(base, -0.5f);
