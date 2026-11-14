@@ -342,6 +342,7 @@ bool WriteFrame(DiligentSceneRenderer::Impl& r, LightingState& st) {
     const ImageSpace& is = r.imageSpace;
     f->exposureA = { std::max(is.adaptKey, 1e-5f), std::clamp(is.adaptStrength, 0.f, 4.f), is.minExposure, is.maxExposure };
     f->exposureB = { r.exposure, is.enabled && ImageSpaceAdaptedView(r) ? 1.f : 0.f, 0.f, 0.f };
+    return true;
 }
 
 } // namespace

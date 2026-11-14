@@ -252,6 +252,7 @@ bool WriteFrameAttribs(DiligentSceneRenderer::Impl& r, PbrState& st) {
         const float radius2 = point.radius * point.radius;
         out.Range4          = radius2 * radius2;
     }
+    return true;
 }
 
 PBR_Renderer::PSO_FLAGS FlagsFor(const MappedMaterial& m) {
